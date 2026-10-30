@@ -1,0 +1,95 @@
+@import "tailwindcss";
+
+@theme {
+  --font-playfair: "Playfair Display", Georgia, serif;
+  --font-poppins: "Poppins", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  
+  --color-brand-50: #f8f6fe;
+  --color-brand-100: #f1ecfe;
+  --color-brand-200: #e4d8fd;
+  --color-brand-300: #cdb6fb;
+  --color-brand-400: #af89f6;
+  --color-brand-500: #905cf0;
+  --color-brand-600: #6C3CE1;
+  --color-brand-700: #5B2FD1;
+  --color-brand-800: #4b23b0;
+  --color-brand-900: #3f1f8e;
+  
+  --color-coral: #FF5B79;
+  --color-coral-light: #FFF0F2;
+  --color-amber-accent: #FFB547;
+  --color-amber-light: #FFF7EB;
+  --color-green-accent: #10B981;
+  --color-green-light: #ECFDF5;
+  --color-lavender: #F4F0FF;
+  --color-lavender-subtle: #FAF8FF;
+}
+
+@layer base {
+  body {
+    font-family: var(--font-poppins);
+    color: #1e293b;
+    background-color: #ffffff;
+  }
+  
+  h1, h2, h3, .font-serif-heading {
+    font-family: var(--font-playfair);
+  }
+}
+
+/* Custom Soft Shadows */
+.shadow-soft {
+  box-shadow: 0 4px 20px -2px rgba(108, 60, 225, 0.08), 0 2px 8px -2px rgba(0, 0, 0, 0.04);
+}
+
+.shadow-soft-lg {
+  box-shadow: 0 10px 30px -4px rgba(108, 60, 225, 0.12), 0 4px 12px -2px rgba(0, 0, 0, 0.04);
+}
+
+.shadow-card-hover {
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.shadow-card-hover:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 20px 35px -6px rgba(108, 60, 225, 0.16), 0 8px 16px -4px rgba(0, 0, 0, 0.06);
+}
+
+/* Glassmorphism */
+.glass-card {
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+}
+
+.glass-card-purple {
+  background: rgba(244, 240, 255, 0.85);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(108, 60, 225, 0.15);
+}
+
+/* Thin / unobtrusive scrollbar for fixed viewport sidebars */
+.sidebar-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.35) transparent;
+}
+
+.sidebar-scroll::-webkit-scrollbar {
+  width: 4px;
+}
+
+.sidebar-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sidebar-scroll::-webkit-scrollbar-thumb {
+  background-color: rgba(148, 163, 184, 0.35);
+  border-radius: 9999px;
+}
+
+.sidebar-scroll:hover::-webkit-scrollbar-thumb {
+  background-color: rgba(100, 116, 139, 0.55);
+}
+

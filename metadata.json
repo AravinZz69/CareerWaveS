@@ -1,0 +1,8 @@
+{
+  "name": "CareerWave - AI Career & Learning Platform",
+  "description": "Premium purple-and-white AI career acceleration platform for students and professionals featuring resume tailoring, job matching, course roadmaps, and interview prep.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
