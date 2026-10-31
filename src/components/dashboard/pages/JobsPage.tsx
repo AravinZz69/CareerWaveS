@@ -8,13 +8,14 @@ import {
   Check,
   Bookmark,
   RefreshCw,
-  Upload,
   CheckCircle2,
   AlertTriangle,
   Share2,
   SlidersHorizontal,
   Briefcase,
   Building2,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import { JobDetailPage } from './JobDetailPage';
 import { useAuth } from '../../../context/AuthContext';
@@ -110,6 +111,8 @@ export const JobsPage: React.FC<JobsPageProps> = ({
 
   // Detail & Interactive States
   const [selectedJob, setSelectedJob] = useState<NormalizedJob | null>(null);
+  const [expandedJobId, setExpandedJobId] = useState<string | null>(null);
+  const [viewLayout, setViewLayout] = useState<'rows' | 'grid'>('rows');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [errorToast, setErrorToast] = useState<string | null>(null);
   const [partialFailureBanner, setPartialFailureBanner] = useState<string | null>(null);
@@ -165,7 +168,7 @@ export const JobsPage: React.FC<JobsPageProps> = ({
             sourcePlatform,
             sortBy,
             page: targetPage,
-            pageSize: 8,
+            pageSize: 15,
             forceRefresh,
             resume: activeResume,
           }),
@@ -415,27 +418,15 @@ export const JobsPage: React.FC<JobsPageProps> = ({
       {/* Header */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div>
-          <span className="inline-flex items-center gap-1.5 rounded-md bg-[#F3ECFF] border border-[#E2D4FF] px-3 py-1 text-xs font-semibold text-[#6C3CE1] mb-2">
-            <Sparkles className="h-3.5 w-3.5 text-[#6C3CE1]" /> Multi-Platform Live Job Aggregator
-          </span>
           <h1 className="font-serif text-2xl md:text-3xl font-bold text-slate-900">
-            Live Jobs & Internships Feed
+            Job Hunter — Live Jobs & Internships
           </h1>
           <p className="text-xs text-slate-500 mt-1">
-            Real-time verified openings aggregated across LinkedIn, Indeed, Apna, Naukri, Google, Adzuna, Jooble & Company Career Pages.
+            Daily verified admin sheet postings & live roles across LinkedIn, Indeed, Apna, Naukri, Google, Adzuna & Company Career Pages. Click any row to expand full details.
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
-          {!hasResume && (
-            <button
-              onClick={() => onNavigateToResume?.()}
-              className="inline-flex items-center gap-2 rounded-xl bg-amber-50 border border-amber-200 px-3.5 py-2 text-xs font-bold text-amber-900 hover:bg-amber-100 cursor-pointer"
-            >
-              <Upload className="h-3.5 w-3.5 text-amber-700" />
-              <span>Upload Resume for A–F Match Grades</span>
-            </button>
-          )}
           <button
             onClick={() => fetchJobs({ targetPage: 1, forceRefresh: true })}
             disabled={loading}
@@ -498,208 +489,25 @@ export const JobsPage: React.FC<JobsPageProps> = ({
         </div>
       )}
 
-      {/* Search & Multi-Source Filter Console */}
-      <div className="rounded-2xl bg-white p-5 border border-slate-200 shadow-2xs space-y-4">
-        {/* Row 1: Keyword Search + Role Filter + Date Window (24h / 72h / 7d / All) + Sort */}
-        <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
-          <div className="md:col-span-4 relative">
-            <Search className="h-4 w-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-            <input
-              type="text"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search title, company, or skill (e.g. LangGraph, Razorpay)..."
-              className="w-full rounded-xl bg-slate-50 border border-slate-200 pl-10 pr-4 py-2.5 text-xs text-slate-800 focus:outline-none focus:border-[#6C3CE1]"
-            />
-          </div>
-
-          <div className="md:col-span-3 relative">
-            <Briefcase className="h-4 w-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-            <input
-              type="text"
-              value={roleFilter}
-              onChange={(e) => setRoleFilter(e.target.value)}
-              placeholder="Role filter (e.g. AI Engineer, Intern)..."
-              className="w-full rounded-xl bg-slate-50 border border-slate-200 pl-10 pr-4 py-2.5 text-xs text-slate-800 focus:outline-none focus:border-[#6C3CE1]"
-            />
-          </div>
-
-          {/* Date Window Toggle */}
-          <div className="md:col-span-3 flex items-center gap-1 rounded-xl bg-slate-50 p-1 border border-slate-200">
-            {[
-              { id: '24h', label: '24h' },
-              { id: '72h', label: '72h' },
-              { id: '7d', label: '7d' },
-              { id: 'all', label: 'All' },
-            ].map((tf) => (
-              <button
-                key={tf.id}
-                onClick={() => setTimeframe(tf.id as JobDateWindow)}
-                className={`flex-1 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-all cursor-pointer ${
-                  timeframe === tf.id
-                    ? 'bg-slate-900 text-white shadow-2xs'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                {tf.label}
-              </button>
-            ))}
-          </div>
-
-          {/* Sort Dropdown */}
-          <div className="md:col-span-2 flex items-center gap-1.5 rounded-xl bg-slate-50 px-3 py-2 border border-slate-200">
-            <SlidersHorizontal className="h-3.5 w-3.5 text-[#6C3CE1] shrink-0" />
-            <select
-              value={sortBy}
-              onChange={(e) => setSortBy(e.target.value as JobSortOption)}
-              aria-label="Sort jobs"
-              className="w-full bg-transparent text-xs font-semibold text-slate-700 focus:outline-none cursor-pointer"
-            >
-              <option value="best_match">Sort: Best Match</option>
-              <option value="newest">Sort: Newest</option>
-              <option value="salary">Sort: Salary</option>
-            </select>
-          </div>
-        </div>
-
-        {/* Row 2: Source Platform Filter Chips */}
-        <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-slate-100">
-          <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mr-1">
-            Source:
-          </span>
-          {SOURCE_PLATFORMS.map((sp) => (
-            <button
-              key={sp}
-              onClick={() => setSourcePlatform(sp)}
-              className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-all cursor-pointer border ${
-                sourcePlatform === sp
-                  ? 'bg-[#6C3CE1] text-white border-[#6C3CE1] shadow-2xs'
-                  : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
-              }`}
-            >
-              {sp === 'All' ? 'All Sources' : sp}
-            </button>
-          ))}
-        </div>
-
-        {/* Row 3: Sector Chips + Employment Type + Location (Default India) + Remote Toggle */}
-        <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-100">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mr-1">
-              Sector:
-            </span>
-            {SECTORS.map((s) => (
-              <button
-                key={s}
-                onClick={() => setSector(s)}
-                className={`rounded-lg px-2.5 py-1 text-xs font-semibold transition-all cursor-pointer ${
-                  sector === s
-                    ? 'bg-slate-900 text-white'
-                    : 'bg-slate-50 text-slate-600 hover:bg-slate-100 border border-slate-200'
-                }`}
-              >
-                {s}
-              </button>
-            ))}
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2.5">
-            {/* Employment Type Selector */}
-            <div className="flex items-center gap-1 rounded-xl bg-slate-50 px-3 py-1.5 border border-slate-200">
-              <span className="text-[11px] font-medium text-slate-500">Type:</span>
-              <select
-                value={employmentType}
-                onChange={(e) => setEmploymentType(e.target.value as EmploymentType | 'all')}
-                aria-label="Employment type"
-                className="bg-transparent text-xs font-semibold text-slate-700 focus:outline-none cursor-pointer"
-              >
-                {EMPLOYMENT_TYPES.map((et) => (
-                  <option key={et.id} value={et.id}>
-                    {et.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {/* Location Selector (Default India) */}
-            <div className="flex items-center gap-1.5 rounded-xl bg-slate-50 px-3 py-1.5 border border-slate-200">
-              <MapPin className="h-3.5 w-3.5 text-[#6C3CE1]" />
-              <select
-                value={locationFilter}
-                onChange={(e) => setLocationFilter(e.target.value)}
-                aria-label="Location filter"
-                className="bg-transparent text-xs font-semibold text-slate-700 focus:outline-none cursor-pointer"
-              >
-                {LOCATIONS.map((loc) => (
-                  <option key={loc} value={loc}>
-                    {loc === 'All' ? 'All Locations' : loc}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {/* Remote Only Toggle */}
-            <label className="flex items-center gap-2 text-xs font-semibold text-slate-600 cursor-pointer select-none rounded-xl bg-slate-50 px-3 py-1.5 border border-slate-200">
-              <input
-                type="checkbox"
-                checked={remoteOnly}
-                onChange={(e) => setRemoteOnly(e.target.checked)}
-                className="rounded text-[#6C3CE1] focus:ring-[#6C3CE1]"
-              />
-              <span>Remote Only</span>
-            </label>
-          </div>
-        </div>
-      </div>
-
-      {/* Results Count Bar */}
-      <div className="flex items-center justify-between text-xs text-slate-500 px-1">
-        <span>
-          Showing <strong className="text-slate-900">{jobs.length}</strong> of{' '}
-          <strong className="text-slate-900">{totalCount || jobs.length}</strong> verified live jobs
-          {sourcePlatform !== 'All' ? ` from ${sourcePlatform}` : ''}
-          {locationFilter !== 'All' ? ` in ${locationFilter}` : ''}
-        </span>
-        {hasResume && (
-          <span className="text-emerald-700 font-semibold flex items-center gap-1">
-            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
-            Scored against your active ATS resume
-          </span>
-        )}
-      </div>
-
-      {/* Job Cards Grid / Skeletons / Empty State */}
+      {/* Job Listings (Expandable Rows by default, or Cards Grid) */}
       {loading ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {[1, 2, 3, 4].map((skeleton) => (
+        <div className="space-y-3">
+          {[1, 2, 3, 4, 5].map((skeleton) => (
             <div
               key={skeleton}
-              className="rounded-2xl bg-white p-6 border border-slate-200 space-y-4 animate-pulse"
+              className="rounded-2xl bg-white p-4 border border-slate-200 flex items-center justify-between gap-4 animate-pulse"
             >
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <div className="h-12 w-12 rounded-xl bg-slate-200" />
-                  <div className="space-y-2">
-                    <div className="h-4 w-28 rounded bg-slate-200" />
-                    <div className="h-5 w-48 rounded bg-slate-200" />
-                    <div className="h-3.5 w-32 rounded bg-slate-100" />
-                  </div>
+              <div className="flex items-center gap-3">
+                <div className="h-11 w-11 rounded-xl bg-slate-200" />
+                <div className="space-y-2">
+                  <div className="h-4 w-52 rounded bg-slate-200" />
+                  <div className="h-3 w-36 rounded bg-slate-100" />
                 </div>
-                <div className="h-7 w-24 rounded-xl bg-slate-200" />
               </div>
-              <div className="h-3.5 w-64 rounded bg-slate-100" />
-              <div className="space-y-2">
-                <div className="h-3 w-full rounded bg-slate-100" />
-                <div className="h-3 w-5/6 rounded bg-slate-100" />
-              </div>
-              <div className="flex gap-2 pt-2">
-                <div className="h-6 w-16 rounded-lg bg-slate-100" />
-                <div className="h-6 w-20 rounded-lg bg-slate-100" />
-                <div className="h-6 w-16 rounded-lg bg-slate-100" />
-              </div>
-              <div className="pt-3 border-t border-slate-100 flex justify-between">
-                <div className="h-9 w-36 rounded-xl bg-slate-200" />
-                <div className="h-9 w-28 rounded-xl bg-slate-100" />
+              <div className="hidden md:flex items-center gap-4">
+                <div className="h-6 w-24 rounded-lg bg-slate-100" />
+                <div className="h-6 w-28 rounded-lg bg-slate-100" />
+                <div className="h-8 w-24 rounded-xl bg-slate-200" />
               </div>
             </div>
           ))}
@@ -729,6 +537,357 @@ export const JobsPage: React.FC<JobsPageProps> = ({
             Reset All Filters
           </button>
         </div>
+      ) : viewLayout === 'rows' ? (
+        <>
+          <div className="rounded-2xl bg-white border border-slate-200 shadow-2xs overflow-hidden divide-y divide-slate-200">
+            {/* Desktop Table Column Header */}
+            <div className="hidden lg:grid lg:grid-cols-12 gap-3 px-5 py-3 bg-slate-50 text-[11px] font-bold uppercase tracking-wider text-slate-500">
+              <div className="col-span-4">Company & Role</div>
+              <div className="col-span-2">Type & Sector</div>
+              <div className="col-span-2">Location & Mode</div>
+              <div className="col-span-2">Salary / Stipend</div>
+              <div className="col-span-2 text-right">Match & Actions</div>
+            </div>
+
+            {jobs.map((job) => {
+              const isExpanded = expandedJobId === job.id;
+              const salaryDisplay =
+                job.salary_range ||
+                formatSalaryRange(job.salary_min, job.salary_max, job.currency) ||
+                'Competitive INR';
+              const postedLabel = formatPostedRelativeTime(job.posted_at);
+              const validApplyUrl = isValidHttpsApplyUrl(job.apply_url);
+              const platform = job.source_platform || 'Company Site';
+              const platformStyle =
+                SOURCE_BADGE_STYLES[platform] || SOURCE_BADGE_STYLES['Company Site'];
+              const isRemote = Boolean(job.is_remote ?? job.remote);
+              const skillsList =
+                Array.isArray(job.required_skills) && job.required_skills.length > 0
+                  ? job.required_skills
+                  : job.requirements || [];
+              const empLabel =
+                job.employment_type === 'internship'
+                  ? 'Internship'
+                  : job.employment_type === 'part-time'
+                  ? 'Part-time'
+                  : job.employment_type === 'contract'
+                  ? 'Contract'
+                  : job.job_type || 'Full-time';
+              const isDailySheetPost =
+                job.source === 'verified_feed' ||
+                (Array.isArray(job.tags) && job.tags.includes('Admin Daily Posting'));
+
+              return (
+                <div
+                  key={job.id}
+                  className={`transition-colors ${
+                    isExpanded ? 'bg-[#FAF8FF]/60' : 'hover:bg-slate-50/90'
+                  }`}
+                >
+                  {/* Summary Row (Click anywhere on row to expand/collapse details) */}
+                  <div
+                    onClick={() =>
+                      setExpandedJobId((prev) => (prev === job.id ? null : job.id))
+                    }
+                    className="px-4 sm:px-5 py-4 cursor-pointer grid grid-cols-1 lg:grid-cols-12 gap-3 items-center"
+                  >
+                    {/* Col 1-4: Logo, Role Title, Company, Source Badge */}
+                    <div className="lg:col-span-4 flex items-center gap-3 min-w-0">
+                      {job.company_logo && !failedLogos[job.id] ? (
+                        <img
+                          src={job.company_logo}
+                          alt={job.company}
+                          onError={() =>
+                            setFailedLogos((prev) => ({ ...prev, [job.id]: true }))
+                          }
+                          className="h-11 w-11 rounded-xl object-cover border border-slate-200 bg-white shrink-0"
+                        />
+                      ) : (
+                        <div className="h-11 w-11 rounded-xl border border-slate-200 bg-[#FAF8FF] text-[#6C3CE1] flex items-center justify-center font-serif text-sm font-bold shrink-0">
+                          {(job.company || 'C').charAt(0).toUpperCase()}
+                        </div>
+                      )}
+
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-1.5 mb-0.5">
+                          <span className="font-serif text-sm sm:text-base font-bold text-slate-900 group-hover:text-[#6C3CE1] truncate">
+                            {job.title}
+                          </span>
+                          {isDailySheetPost && (
+                            <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">
+                              Daily Sheet
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                          <span className="font-semibold text-slate-700 flex items-center gap-1">
+                            <Building2 className="h-3 w-3 text-slate-400" />
+                            {job.company}
+                          </span>
+                          <span
+                            className={`inline-block rounded-md px-1.5 py-0.5 text-[10px] font-bold border ${platformStyle}`}
+                          >
+                            {platform}
+                          </span>
+                          <span className="text-[11px] text-slate-400 flex items-center gap-1">
+                            <Clock className="h-3 w-3" />
+                            {postedLabel}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Col 5-6: Employment Type & Sector */}
+                    <div className="lg:col-span-2 flex flex-wrap items-center gap-1.5">
+                      <span
+                        className={`inline-block rounded-lg px-2.5 py-1 text-[11px] font-bold border ${
+                          empLabel === 'Internship'
+                            ? 'bg-amber-50 text-amber-800 border-amber-200'
+                            : 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                        }`}
+                      >
+                        {empLabel}
+                      </span>
+                      <span className="inline-block rounded-lg bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600">
+                        {job.sector}
+                      </span>
+                    </div>
+
+                    {/* Col 7-8: Location & Remote Mode */}
+                    <div className="lg:col-span-2 flex flex-wrap items-center gap-1.5 text-xs text-slate-600">
+                      <MapPin className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                      <span className="truncate">{job.location}</span>
+                      {isRemote && (
+                        <span className="rounded-md bg-emerald-50 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700 border border-emerald-200">
+                          Remote
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Col 9-10: Compensation */}
+                    <div className="lg:col-span-2 text-xs font-bold text-emerald-700">
+                      {salaryDisplay}
+                    </div>
+
+                    {/* Col 11-12: Match Grade + Direct Apply + Expand Chevron */}
+                    <div
+                      className="lg:col-span-2 flex items-center justify-between lg:justify-end gap-2"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {hasResume && job.matchGrade && (
+                        <span
+                          className={`inline-flex items-center rounded-lg px-2 py-1 text-[11px] font-bold border ${
+                            job.matchGrade.startsWith('A')
+                              ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                              : job.matchGrade.startsWith('B')
+                              ? 'bg-[#F3ECFF] text-[#6C3CE1] border-[#E2D4FF]'
+                              : 'bg-amber-50 text-amber-800 border-amber-200'
+                          }`}
+                        >
+                          {job.matchGrade} ({job.matchScore}%)
+                        </span>
+                      )}
+
+                      {validApplyUrl ? (
+                        <button
+                          onClick={() => handleApplyExternal(job)}
+                          className="rounded-xl bg-[#6C3CE1] hover:bg-[#5829C7] px-3 py-1.5 text-xs font-bold text-white shadow-2xs cursor-pointer inline-flex items-center gap-1 transition-all"
+                        >
+                          <span>Apply</span>
+                          <ExternalLink className="h-3 w-3" />
+                        </button>
+                      ) : (
+                        <span className="text-[11px] text-slate-400">No Link</span>
+                      )}
+
+                      <button
+                        onClick={() =>
+                          setExpandedJobId((prev) => (prev === job.id ? null : job.id))
+                        }
+                        aria-label={isExpanded ? 'Collapse job details' : 'Expand job details'}
+                        className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-200/70 hover:text-slate-900 cursor-pointer"
+                      >
+                        {isExpanded ? (
+                          <ChevronUp className="h-4 w-4 text-[#6C3CE1]" />
+                        ) : (
+                          <ChevronDown className="h-4 w-4" />
+                        )}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Expanded Row Details Accordion */}
+                  {isExpanded && (
+                    <div className="px-5 pb-5 pt-2 bg-white border-t border-slate-200/80 space-y-4">
+                      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 pt-2">
+                        {/* Left 8 cols: Full Description, Responsibilities, Skills */}
+                        <div className="lg:col-span-8 space-y-4">
+                          <div>
+                            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-1.5">
+                              Role Overview & Description
+                            </h4>
+                            <p className="text-xs sm:text-sm text-slate-700 leading-relaxed whitespace-pre-line">
+                              {sanitizeJobDescriptionHtml(job.description)}
+                            </p>
+                          </div>
+
+                          {Array.isArray(job.responsibilities) &&
+                            job.responsibilities.length > 0 && (
+                              <div>
+                                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-1.5">
+                                  Key Responsibilities
+                                </h4>
+                                <ul className="space-y-1 text-xs text-slate-700 list-disc list-inside">
+                                  {job.responsibilities.map((resp, idx) => (
+                                    <li key={idx}>{resp}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+
+                          {skillsList.length > 0 && (
+                            <div>
+                              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-1.5">
+                                Required Skills & Keywords
+                              </h4>
+                              <div className="flex flex-wrap gap-1.5">
+                                {skillsList.map((skill: string) => (
+                                  <span
+                                    key={skill}
+                                    className="rounded-lg bg-slate-50 border border-slate-200 px-2.5 py-1 text-xs font-semibold text-slate-700"
+                                  >
+                                    {skill}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Right 4 cols: Direct Applying Link Card + Match Analysis + Actions */}
+                        <div className="lg:col-span-4 space-y-3">
+                          <div className="rounded-2xl bg-[#FAF8FF] border border-[#E2D4FF] p-4 space-y-3">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[11px] font-bold uppercase tracking-wider text-[#6C3CE1]">
+                                Direct Applying Link
+                              </span>
+                              <span
+                                className={`inline-block rounded-md px-2 py-0.5 text-[10px] font-bold border ${platformStyle}`}
+                              >
+                                via {platform}
+                              </span>
+                            </div>
+
+                            {validApplyUrl ? (
+                              <>
+                                <p className="text-[11px] text-slate-600 font-mono truncate bg-white px-2.5 py-1.5 rounded-lg border border-slate-200">
+                                  {job.apply_url}
+                                </p>
+                                <button
+                                  onClick={() => handleApplyExternal(job)}
+                                  className="w-full rounded-xl bg-[#6C3CE1] hover:bg-[#5829C7] px-4 py-2.5 text-xs font-bold text-white shadow-xs cursor-pointer flex items-center justify-center gap-2 transition-all"
+                                >
+                                  <span>Apply Now on {platform}</span>
+                                  <ExternalLink className="h-3.5 w-3.5" />
+                                </button>
+                              </>
+                            ) : (
+                              <p className="text-xs text-slate-500">
+                                Direct external application link not provided.
+                              </p>
+                            )}
+
+                            <div className="grid grid-cols-2 gap-2 pt-1">
+                              <button
+                                onClick={() =>
+                                  onTailorResume?.({
+                                    title: job.title,
+                                    company: job.company,
+                                    description: job.description,
+                                  })
+                                }
+                                className="rounded-xl border border-slate-300 bg-white hover:bg-slate-50 px-3 py-2 text-xs font-bold text-slate-800 cursor-pointer flex items-center justify-center gap-1.5"
+                              >
+                                <Sparkles className="h-3.5 w-3.5 text-[#6C3CE1]" />
+                                <span>Tailor Resume</span>
+                              </button>
+                              <button
+                                onClick={() => setSelectedJob(job)}
+                                className="rounded-xl bg-slate-900 hover:bg-slate-800 px-3 py-2 text-xs font-bold text-white cursor-pointer flex items-center justify-center gap-1.5"
+                              >
+                                <span>Full Kit & Email</span>
+                              </button>
+                            </div>
+
+                            <div className="flex items-center justify-between pt-2 border-t border-[#E2D4FF]/60">
+                              <button
+                                onClick={() => handleSaveJob(job)}
+                                className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-700 hover:text-[#6C3CE1] cursor-pointer"
+                              >
+                                <Bookmark className="h-3.5 w-3.5" />
+                                <span>Save to Tracker</span>
+                              </button>
+                              <button
+                                onClick={() => handleShareJobCard(job)}
+                                className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-700 hover:text-[#6C3CE1] cursor-pointer"
+                              >
+                                {copiedJobId === job.id ? (
+                                  <>
+                                    <Check className="h-3.5 w-3.5 text-emerald-600" />
+                                    <span className="text-emerald-700">Copied Link</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Share2 className="h-3.5 w-3.5" />
+                                    <span>Copy Apply Link</span>
+                                  </>
+                                )}
+                              </button>
+                            </div>
+                          </div>
+
+                          {hasResume && job.matchReasons && job.matchReasons.length > 0 && (
+                            <div className="rounded-xl bg-slate-50 border border-slate-200 p-3 text-xs space-y-1">
+                              <p className="font-bold text-emerald-700 flex items-center gap-1.5">
+                                <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                                <span>{job.matchReasons[0]}</span>
+                              </p>
+                              {job.missingSkills && job.missingSkills.length > 0 && (
+                                <p className="text-[11px] text-slate-600">
+                                  Missing skills: {job.missingSkills.slice(0, 4).join(', ')}
+                                </p>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Infinite Scroll Sentinel & Load More Button */}
+          <div ref={loadMoreTriggerRef} className="pt-4 flex flex-col items-center justify-center">
+            {hasMore && (
+              <button
+                onClick={() => fetchJobs({ targetPage: page + 1 })}
+                disabled={loadingMore}
+                className="rounded-xl bg-white border border-slate-300 hover:bg-slate-50 px-5 py-2.5 text-xs font-bold text-slate-800 shadow-2xs cursor-pointer flex items-center gap-2 disabled:opacity-60"
+              >
+                {loadingMore ? (
+                  <>
+                    <RefreshCw className="h-3.5 w-3.5 animate-spin text-[#6C3CE1]" />
+                    <span>Loading more jobs...</span>
+                  </>
+                ) : (
+                  <span>Load More Jobs ({totalCount - jobs.length} remaining)</span>
+                )}
+              </button>
+            )}
+          </div>
+        </>
       ) : (
         <>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

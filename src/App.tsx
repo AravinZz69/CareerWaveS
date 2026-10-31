@@ -1,11 +1,21 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense, lazy } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { LandingPage } from './components/landing/LandingPage';
-import { DashboardShell, DashboardPageId } from './components/dashboard/DashboardShell';
-import { AuthModal } from './components/auth/AuthModal';
+import type { DashboardPageId } from './components/dashboard/DashboardShell';
 import { MobileTabBar } from './components/navigation/MobileTabBar';
-import { UpgradeModal } from './components/saas/UpgradeModal';
-import { TermsPrivacyModal } from './components/saas/TermsPrivacyModal';
+
+const DashboardShell = lazy(() =>
+  import('./components/dashboard/DashboardShell').then((m) => ({ default: m.DashboardShell }))
+);
+const AuthModal = lazy(() =>
+  import('./components/auth/AuthModal').then((m) => ({ default: m.AuthModal }))
+);
+const UpgradeModal = lazy(() =>
+  import('./components/saas/UpgradeModal').then((m) => ({ default: m.UpgradeModal }))
+);
+const TermsPrivacyModal = lazy(() =>
+  import('./components/saas/TermsPrivacyModal').then((m) => ({ default: m.TermsPrivacyModal }))
+);
 
 const CareerWaveContent: React.FC = () => {
   const {
@@ -151,22 +161,33 @@ const CareerWaveContent: React.FC = () => {
           onOpenLegal={(tab) => setLegalModalTab(tab)}
         />
       ) : (
-        <DashboardShell
-          activePage={role === 'admin' ? 'admin' : activeDashboardPage === 'admin' ? 'overview' : activeDashboardPage}
-          onSelectPage={(page) => {
-            if (role === 'admin') {
-              setActiveDashboardPage('admin');
-              return;
-            }
-            if (page === 'admin') {
-              setActiveDashboardPage('overview');
-              return;
-            }
-            setActiveDashboardPage(page);
-          }}
-          onExitToLanding={() => setViewMode('landing')}
-          onOpenLegal={(tab) => setLegalModalTab(tab)}
-        />
+        <Suspense
+          fallback={
+            <div className="min-h-screen flex items-center justify-center bg-[#FAF8FF]">
+              <div className="flex flex-col items-center gap-3">
+                <div className="w-8 h-8 rounded-full border-2 border-[#6C3CE1] border-t-transparent animate-spin" />
+                <span className="text-xs font-semibold text-slate-500">Loading workspace...</span>
+              </div>
+            </div>
+          }
+        >
+          <DashboardShell
+            activePage={role === 'admin' ? 'admin' : activeDashboardPage === 'admin' ? 'overview' : activeDashboardPage}
+            onSelectPage={(page) => {
+              if (role === 'admin') {
+                setActiveDashboardPage('admin');
+                return;
+              }
+              if (page === 'admin') {
+                setActiveDashboardPage('overview');
+                return;
+              }
+              setActiveDashboardPage(page);
+            }}
+            onExitToLanding={() => setViewMode('landing')}
+            onOpenLegal={(tab) => setLegalModalTab(tab)}
+          />
+        </Suspense>
       )}
 
       {/* Mobile Bottom Tab Bar (for non-admin users only) */}
@@ -177,36 +198,44 @@ const CareerWaveContent: React.FC = () => {
         />
       )}
 
-      {/* Authentication Modal */}
-      <AuthModal
-        isOpen={authModalOpen}
-        onClose={() => {
-          setAuthModalOpen(false);
-          setPendingDashboardPage(null);
-        }}
-        initialMode={authMode}
-        onSuccess={() => {
-          const target = pendingDashboardPage || 'overview';
-          setPendingDashboardPage(null);
-          setActiveDashboardPage(role === 'admin' ? 'admin' : target === 'admin' ? 'overview' : target);
-          setViewMode('dashboard');
-          window.scrollTo({ top: 0, behavior: 'smooth' });
-        }}
-      />
+      <Suspense fallback={null}>
+        {/* Authentication Modal */}
+        {authModalOpen && (
+          <AuthModal
+            isOpen={authModalOpen}
+            onClose={() => {
+              setAuthModalOpen(false);
+              setPendingDashboardPage(null);
+            }}
+            initialMode={authMode}
+            onSuccess={() => {
+              const target = pendingDashboardPage || 'overview';
+              setPendingDashboardPage(null);
+              setActiveDashboardPage(role === 'admin' ? 'admin' : target === 'admin' ? 'overview' : target);
+              setViewMode('dashboard');
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }}
+          />
+        )}
 
-      {/* SaaS Plan Upgrade Modal */}
-      <UpgradeModal
-        isOpen={upgradeModalOpen}
-        onClose={closeUpgradeModal}
-        triggerFeature={upgradeTriggerFeature}
-      />
+        {/* SaaS Plan Upgrade Modal */}
+        {upgradeModalOpen && (
+          <UpgradeModal
+            isOpen={upgradeModalOpen}
+            onClose={closeUpgradeModal}
+            triggerFeature={upgradeTriggerFeature}
+          />
+        )}
 
-      {/* Legal Modal (Terms, Privacy, Refund Policy) */}
-      <TermsPrivacyModal
-        isOpen={legalModalTab !== null}
-        onClose={() => setLegalModalTab(null)}
-        initialTab={legalModalTab || 'terms'}
-      />
+        {/* Legal Modal (Terms, Privacy, Refund Policy) */}
+        {legalModalTab !== null && (
+          <TermsPrivacyModal
+            isOpen={legalModalTab !== null}
+            onClose={() => setLegalModalTab(null)}
+            initialTab={legalModalTab || 'terms'}
+          />
+        )}
+      </Suspense>
     </div>
   );
 };

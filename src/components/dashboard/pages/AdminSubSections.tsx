@@ -21,8 +21,29 @@ import {
   EyeOff,
   Search,
   Sliders,
+  Upload,
+  Download,
+  FileSpreadsheet,
+  ExternalLink,
+  CheckCircle2,
+  Info,
+  X,
+  Database,
+  Server,
 } from 'lucide-react';
 import { PlanName } from '../../../lib/supabase';
+import { preloadJobs } from '../../../context/AuthContext';
+import { UNIFIED_SCHEMA_TABLES } from '../../../schema/unifiedDataSchema';
+import {
+  EXCEL_JOB_COLUMNS,
+  SAMPLE_EXCEL_ROWS,
+  ParsedSheetJobRow,
+  downloadSampleJobsExcel,
+  downloadSampleJobsCsv,
+  parseUploadedJobSheetBuffer,
+  parsePastedSpreadsheetText,
+  normalizeRawRowToJob,
+} from '../../../utils/jobExcelTemplate';
 
 interface AdminSubSectionsProps {
   activeSection:
@@ -48,6 +69,7 @@ interface AdminSubSectionsProps {
     onConfirm: () => Promise<void>;
   }) => void;
   showToast: (msg: string) => void;
+  getAuthHeaders?: () => Record<string, string>;
 }
 
 export const AdminSubSections: React.FC<AdminSubSectionsProps> = ({
@@ -62,6 +84,7 @@ export const AdminSubSections: React.FC<AdminSubSectionsProps> = ({
   onRefreshAll,
   onConfirmAction,
   showToast,
+  getAuthHeaders,
 }) => {
   // Content state
   const [contentTypeFilter, setContentTypeFilter] = useState<string>('all');
@@ -75,8 +98,29 @@ export const AdminSubSections: React.FC<AdminSubSectionsProps> = ({
     status: 'published',
   });
 
-  // Jobs state
+  // Jobs & Daily Excel/Sheets Upload state
   const [refreshingJobs, setRefreshingJobs] = useState(false);
+  const [uploadTab, setUploadTab] = useState<'excel' | 'paste' | 'single'>('excel');
+  const [showColumnGuide, setShowColumnGuide] = useState(false);
+  const [parsedSheetRows, setParsedSheetRows] = useState<ParsedSheetJobRow[]>([]);
+  const [uploadedFileName, setUploadedFileName] = useState<string>('');
+  const [uploadMode, setUploadMode] = useState<'append' | 'replace'>('append');
+  const [publishingJobs, setPublishingJobs] = useState(false);
+  const [pasteSheetText, setPasteSheetText] = useState('');
+  const [singleJobDraft, setSingleJobDraft] = useState({
+    company: '',
+    role: '',
+    employmentType: 'Full-time',
+    applyUrl: '',
+    location: 'Bengaluru, Karnataka, India',
+    workMode: 'Hybrid',
+    salary: '₹18L – ₹28L/yr',
+    sector: 'Software',
+    skills: 'React, TypeScript, Node.js, SQL',
+    description: '',
+    sourcePlatform: 'Company Site',
+  });
+  const excelInputRef = React.useRef<HTMLInputElement | null>(null);
 
   // Support state
   const [ticketStatusFilter, setTicketStatusFilter] = useState<string>('all');
@@ -393,15 +437,23 @@ export const AdminSubSections: React.FC<AdminSubSectionsProps> = ({
   }
 
   // ============================================================================
-  // 6. JOBS MANAGEMENT
+  // 6. JOBS MANAGEMENT & DAILY EXCEL / GOOGLE SHEETS BULK POSTING
   // ============================================================================
   if (activeSection === 'jobs') {
+    const authHeaders = getAuthHeaders
+      ? getAuthHeaders()
+      : { 'Content-Type': 'application/json' };
+
     const handleManualRefresh = async () => {
       setRefreshingJobs(true);
       try {
-        const res = await fetch('/api/admin/jobs/refresh', { method: 'POST' });
+        const res = await fetch('/api/admin/jobs/refresh', {
+          method: 'POST',
+          headers: authHeaders,
+        });
         const data = await res.json();
         if (data.success) {
+          preloadJobs();
           showToast('External job-search API synced! Added fresh role and wrote to audit_logs.');
           await onRefreshAll();
         }
@@ -410,33 +462,638 @@ export const AdminSubSections: React.FC<AdminSubSectionsProps> = ({
       }
     };
 
+    const handleExcelFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      e.target.value = '';
+      try {
+        const arrayBuf = await file.arrayBuffer();
+        const rows = parseUploadedJobSheetBuffer(arrayBuf);
+        setUploadedFileName(file.name);
+        setParsedSheetRows(rows);
+        if (rows.length === 0) {
+          showToast('No rows found in the uploaded sheet. Check the sample template format.');
+        } else {
+          const validCount = rows.filter((r) => r.valid).length;
+          showToast(
+            `Parsed ${rows.length} row(s) from "${file.name}" (${validCount} valid ready to publish).`
+          );
+        }
+      } catch (err: any) {
+        showToast(err?.message || 'Could not parse file. Please upload a valid .xlsx, .xls, or .csv file.');
+      }
+    };
+
+    const handleLoadSampleIntoPreview = () => {
+      const rows = SAMPLE_EXCEL_ROWS.map((r, i) => normalizeRawRowToJob(r, i));
+      setUploadedFileName('CareerWave-Daily-Jobs-Internships-Sample.xlsx');
+      setParsedSheetRows(rows);
+      showToast(`Loaded ${rows.length} sample job & internship rows into preview.`);
+    };
+
+    const handleParsePastedText = () => {
+      if (!pasteSheetText.trim()) {
+        showToast('Paste rows from Google Sheets or Excel first.');
+        return;
+      }
+      try {
+        const rows = parsePastedSpreadsheetText(pasteSheetText);
+        setUploadedFileName('Google Sheets / Clipboard Paste');
+        setParsedSheetRows(rows);
+        showToast(`Parsed ${rows.length} row(s) from pasted spreadsheet data.`);
+      } catch {
+        showToast('Unable to parse pasted spreadsheet text. Make sure header row is included.');
+      }
+    };
+
+    const handleAddSingleRowToBatch = (e: React.FormEvent) => {
+      e.preventDefault();
+      const rawObj = {
+        'Company Name': singleJobDraft.company,
+        Role: singleJobDraft.role,
+        'Employment Type': singleJobDraft.employmentType,
+        'Applying Link': singleJobDraft.applyUrl,
+        Location: singleJobDraft.location,
+        'Work Mode': singleJobDraft.workMode,
+        'Salary / Stipend': singleJobDraft.salary,
+        Sector: singleJobDraft.sector,
+        'Required Skills': singleJobDraft.skills,
+        'Job Description': singleJobDraft.description,
+        'Source Platform': singleJobDraft.sourcePlatform,
+      };
+      const parsed = normalizeRawRowToJob(rawObj, parsedSheetRows.length);
+      setParsedSheetRows((prev) => [parsed, ...prev]);
+      if (!uploadedFileName) setUploadedFileName('Admin Manual Entry Batch');
+      setSingleJobDraft({
+        ...singleJobDraft,
+        company: '',
+        role: '',
+        applyUrl: '',
+        description: '',
+      });
+      showToast(`Added "${parsed.job.title}" at ${parsed.job.company} to staging preview.`);
+    };
+
+    const handlePublishStagedJobs = async () => {
+      const validJobs = parsedSheetRows.filter((r) => r.valid).map((r) => r.job);
+      if (validJobs.length === 0) {
+        showToast('No valid rows to publish. Ensure Company Name, Role, and Applying Link are valid.');
+        return;
+      }
+      setPublishingJobs(true);
+      try {
+        const res = await fetch('/api/admin/jobs/bulk-upload', {
+          method: 'POST',
+          headers: authHeaders,
+          body: JSON.stringify({
+            jobs: validJobs,
+            mode: uploadMode,
+            sheetSourceName: uploadedFileName || 'Admin Daily Excel Upload',
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+          showToast(data.error || 'Failed to publish jobs from sheet.');
+          return;
+        }
+        preloadJobs();
+        setParsedSheetRows([]);
+        setUploadedFileName('');
+        showToast(
+          data.message ||
+            `Published ${validJobs.length} job/internship postings to the user Job Hunter feed!`
+        );
+        await onRefreshAll();
+      } catch (err: any) {
+        showToast(err?.message || 'Network error while publishing jobs.');
+      } finally {
+        setPublishingJobs(false);
+      }
+    };
+
+    const validStagedCount = parsedSheetRows.filter((r) => r.valid).length;
+
     return (
       <div className="space-y-6">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        {/* Header Bar */}
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           <div>
             <h3 className="font-serif-heading font-bold text-xl text-slate-900">
-              Cached Jobs Feed & Spam Moderation
+              Daily Job & Internship Posting (Excel / Google Sheets) & Feed Moderation
             </h3>
             <p className="text-xs text-slate-500">
-              Inspect cached roles in the `jobs` table, remove spam listings, or trigger an immediate external job-search API sync.
+              Upload daily job or internship openings via Excel (`.xlsx`, `.xls`) or Google Sheets (`.csv`). Uploaded rows automatically update the user Job Hunter page in expandable rows.
             </p>
           </div>
-          <Button
-            variant="primary"
-            size="sm"
-            disabled={refreshingJobs}
-            onClick={handleManualRefresh}
-            className="text-xs font-bold shrink-0"
-          >
-            <RefreshCw className={`w-4 h-4 ${refreshingJobs ? 'animate-spin' : ''}`} />
-            {refreshingJobs ? 'Syncing External Job API...' : 'Trigger Manual Job Fetch'}
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={downloadSampleJobsExcel}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 px-3.5 py-2 text-xs font-bold text-white shadow-xs transition-colors cursor-pointer"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Download Sample Excel (.xlsx)</span>
+            </button>
+            <button
+              type="button"
+              onClick={downloadSampleJobsCsv}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-purple-200 bg-white hover:bg-[#FAF8FF] px-3 py-2 text-xs font-bold text-[#6C3CE1] transition-colors cursor-pointer"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5" />
+              <span>Sample CSV (Sheets)</span>
+            </button>
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={refreshingJobs}
+              onClick={handleManualRefresh}
+              className="text-xs font-bold shrink-0"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${refreshingJobs ? 'animate-spin' : ''}`} />
+              <span>{refreshingJobs ? 'Syncing API...' : 'Sync External Job API'}</span>
+            </Button>
+          </div>
         </div>
 
-        <Card className="p-6 bg-white border border-purple-100 shadow-soft">
+        {/* Excel / Google Sheets Upload & Staging Console */}
+        <Card className="p-6 bg-white border-2 border-purple-100 shadow-soft space-y-5">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-purple-100 pb-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-[#F4F0FF] text-[#6C3CE1] flex items-center justify-center shrink-0">
+                <FileSpreadsheet className="w-5 h-5" />
+              </div>
+              <div>
+                <h4 className="font-bold text-sm text-slate-900">
+                  Bulk Post Daily Jobs & Internships via Excel or Sheets
+                </h4>
+                <p className="text-xs text-slate-500">
+                  Required columns: <strong>Company Name</strong>, <strong>Role</strong>,{' '}
+                  <strong>Employment Type</strong> (Full-time / Internship), and{' '}
+                  <strong>Applying Link</strong> (`https://...`).
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setShowColumnGuide((prev) => !prev)}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-[#FAF8FF] border border-purple-200 px-3 py-1.5 text-xs font-bold text-[#6C3CE1] hover:bg-purple-100 transition-colors cursor-pointer self-start sm:self-auto"
+            >
+              <Info className="w-3.5 h-3.5" />
+              <span>{showColumnGuide ? 'Hide Excel Column Guide' : 'View Excel Column Guide'}</span>
+            </button>
+          </div>
+
+          {/* Collapsible Excel Column Format Reference Table */}
+          {showColumnGuide && (
+            <div className="rounded-2xl bg-[#FAF8FF] border border-purple-200 p-4 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h5 className="text-xs font-bold text-slate-900">
+                    Required & Optional Columns for Excel / Google Sheets Upload
+                  </h5>
+                  <p className="text-[11px] text-slate-500">
+                    The parser automatically matches flexible column names (e.g., "Role" or "Job Title", "Applying Link" or "Apply URL").
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={downloadSampleJobsExcel}
+                  className="inline-flex items-center gap-1 rounded-lg bg-[#6C3CE1] px-3 py-1 text-[11px] font-bold text-white cursor-pointer"
+                >
+                  <Download className="w-3 h-3" /> Download Pre-Filled .xlsx Sample
+                </button>
+              </div>
+              <div className="overflow-x-auto rounded-xl border border-purple-100 bg-white">
+                <table className="w-full text-left border-collapse text-[11px]">
+                  <thead>
+                    <tr className="border-b border-purple-100 bg-slate-50 text-slate-500 font-bold">
+                      <th className="py-2 px-3">Column Header</th>
+                      <th className="py-2 px-3">Status</th>
+                      <th className="py-2 px-3">Full-Time Job Example</th>
+                      <th className="py-2 px-3">Internship Example</th>
+                      <th className="py-2 px-3">Description</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {EXCEL_JOB_COLUMNS.map((col) => (
+                      <tr key={col.header}>
+                        <td className="py-2 px-3 font-mono font-bold text-slate-900">
+                          {col.header}
+                        </td>
+                        <td className="py-2 px-3">
+                          {col.required ? (
+                            <span className="rounded-full bg-rose-100 text-rose-700 px-2 py-0.5 text-[10px] font-bold">
+                              REQUIRED
+                            </span>
+                          ) : (
+                            <span className="rounded-full bg-slate-100 text-slate-600 px-2 py-0.5 text-[10px] font-semibold">
+                              Optional
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-2 px-3 text-slate-700">{col.exampleJob}</td>
+                        <td className="py-2 px-3 text-[#6C3CE1] font-medium">
+                          {col.exampleInternship}
+                        </td>
+                        <td className="py-2 px-3 text-slate-500">{col.description}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Mode Tabs: 1. Upload Excel/CSV | 2. Paste from Google Sheets | 3. Quick Single Entry */}
+          <div className="flex flex-wrap items-center gap-2">
+            {[
+              { id: 'excel', label: '1. Upload Excel / CSV File (.xlsx, .xls, .csv)' },
+              { id: 'paste', label: '2. Copy & Paste from Google Sheets' },
+              { id: 'single', label: '3. Quick Single Job / Internship Form' },
+            ].map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => setUploadTab(t.id as any)}
+                className={`rounded-xl px-3.5 py-2 text-xs font-bold transition-all cursor-pointer ${
+                  uploadTab === t.id
+                    ? 'bg-[#6C3CE1] text-white shadow-xs'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Tab 1: Upload Excel / CSV */}
+          {uploadTab === 'excel' && (
+            <div className="rounded-2xl border-2 border-dashed border-purple-200 bg-[#FAF8FF]/70 p-6 text-center space-y-3">
+              <input
+                ref={excelInputRef}
+                type="file"
+                accept=".xlsx,.xls,.csv,.tsv"
+                onChange={handleExcelFileChange}
+                className="hidden"
+              />
+              <div className="w-12 h-12 rounded-2xl bg-white border border-purple-200 text-[#6C3CE1] flex items-center justify-center mx-auto shadow-2xs">
+                <Upload className="w-6 h-6" />
+              </div>
+              <div className="space-y-1">
+                <p className="text-sm font-bold text-slate-900">
+                  Upload Daily Jobs & Internships Excel or CSV Sheet
+                </p>
+                <p className="text-xs text-slate-500 max-w-lg mx-auto">
+                  Supports Microsoft Excel (`.xlsx`, `.xls`) and Google Sheets exported as `.xlsx` or `.csv`. All rows will be validated and displayed in the preview table below before publishing.
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center justify-center gap-3 pt-1">
+                <button
+                  type="button"
+                  onClick={() => excelInputRef.current?.click()}
+                  className="inline-flex items-center gap-2 rounded-xl bg-[#6C3CE1] hover:bg-[#5829C7] px-4 py-2.5 text-xs font-bold text-white shadow-xs transition-colors cursor-pointer"
+                >
+                  <Upload className="w-4 h-4" />
+                  <span>Select Excel / CSV File</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleLoadSampleIntoPreview}
+                  className="inline-flex items-center gap-2 rounded-xl border border-purple-200 bg-white hover:bg-purple-50 px-4 py-2.5 text-xs font-bold text-[#6C3CE1] transition-colors cursor-pointer"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>Load 6 Sample Jobs & Internships into Preview</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Tab 2: Paste from Google Sheets */}
+          {uploadTab === 'paste' && (
+            <div className="space-y-3">
+              <label className="block text-xs font-bold text-slate-700">
+                Copy cells directly from Google Sheets or Excel (including the header row) and paste below:
+              </label>
+              <textarea
+                rows={5}
+                value={pasteSheetText}
+                onChange={(e) => setPasteSheetText(e.target.value)}
+                placeholder={`Company Name\tRole\tEmployment Type\tApplying Link\tLocation\tWork Mode\tSalary / Stipend\tSector\tRequired Skills\nRazorpay\tFrontend Engineer\tFull-time\thttps://razorpay.com/jobs/\tBengaluru\tHybrid\t₹22L - ₹32L/yr\tFinTech\tReact, TypeScript`}
+                className="w-full rounded-xl border border-purple-200 bg-slate-50 p-3 font-mono text-xs text-slate-800 focus:bg-white focus:border-[#6C3CE1] focus:outline-none"
+              />
+              <div className="flex justify-end">
+                <Button
+                  type="button"
+                  variant="primary"
+                  size="sm"
+                  onClick={handleParsePastedText}
+                  className="text-xs font-bold"
+                >
+                  Parse Pasted Sheet Rows
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* Tab 3: Single Quick Job / Internship Form */}
+          {uploadTab === 'single' && (
+            <form
+              onSubmit={handleAddSingleRowToBatch}
+              className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-[#FAF8FF] p-4 rounded-2xl border border-purple-100"
+            >
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                  Company Name *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={singleJobDraft.company}
+                  onChange={(e) =>
+                    setSingleJobDraft({ ...singleJobDraft, company: e.target.value })
+                  }
+                  placeholder="e.g. Swiggy / CRED"
+                  className="w-full rounded-xl border border-purple-200 bg-white px-3 py-2 text-xs"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                  Role / Job Title *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={singleJobDraft.role}
+                  onChange={(e) => setSingleJobDraft({ ...singleJobDraft, role: e.target.value })}
+                  placeholder="e.g. AI Engineering Intern"
+                  className="w-full rounded-xl border border-purple-200 bg-white px-3 py-2 text-xs"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                  Employment Type *
+                </label>
+                <select
+                  value={singleJobDraft.employmentType}
+                  onChange={(e) =>
+                    setSingleJobDraft({ ...singleJobDraft, employmentType: e.target.value })
+                  }
+                  className="w-full rounded-xl border border-purple-200 bg-white px-3 py-2 text-xs font-semibold"
+                >
+                  <option value="Full-time">Full-time Job</option>
+                  <option value="Internship">Internship</option>
+                  <option value="Part-time">Part-time</option>
+                  <option value="Contract">Contract</option>
+                </select>
+              </div>
+              <div className="sm:col-span-2">
+                <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                  Applying Link (Direct URL) *
+                </label>
+                <input
+                  type="url"
+                  required
+                  value={singleJobDraft.applyUrl}
+                  onChange={(e) =>
+                    setSingleJobDraft({ ...singleJobDraft, applyUrl: e.target.value })
+                  }
+                  placeholder="https://careers.company.com/apply"
+                  className="w-full rounded-xl border border-purple-200 bg-white px-3 py-2 text-xs font-mono"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                  Salary / Stipend
+                </label>
+                <input
+                  type="text"
+                  value={singleJobDraft.salary}
+                  onChange={(e) =>
+                    setSingleJobDraft({ ...singleJobDraft, salary: e.target.value })
+                  }
+                  placeholder="e.g. ₹18L – ₹26L/yr or ₹50k/mo"
+                  className="w-full rounded-xl border border-purple-200 bg-white px-3 py-2 text-xs"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 mb-1">Location</label>
+                <input
+                  type="text"
+                  value={singleJobDraft.location}
+                  onChange={(e) =>
+                    setSingleJobDraft({ ...singleJobDraft, location: e.target.value })
+                  }
+                  placeholder="Bengaluru, Hyderabad, Remote"
+                  className="w-full rounded-xl border border-purple-200 bg-white px-3 py-2 text-xs"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                  Sector / Track
+                </label>
+                <select
+                  value={singleJobDraft.sector}
+                  onChange={(e) =>
+                    setSingleJobDraft({ ...singleJobDraft, sector: e.target.value })
+                  }
+                  className="w-full rounded-xl border border-purple-200 bg-white px-3 py-2 text-xs"
+                >
+                  <option value="Software">Software</option>
+                  <option value="GenAI">GenAI</option>
+                  <option value="Enterprise AI">Enterprise AI</option>
+                  <option value="FinTech">FinTech</option>
+                  <option value="Analytics">Analytics</option>
+                  <option value="IT Services">IT Services</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                  Required Skills (comma-separated)
+                </label>
+                <input
+                  type="text"
+                  value={singleJobDraft.skills}
+                  onChange={(e) =>
+                    setSingleJobDraft({ ...singleJobDraft, skills: e.target.value })
+                  }
+                  placeholder="Python, React, TypeScript, SQL"
+                  className="w-full rounded-xl border border-purple-200 bg-white px-3 py-2 text-xs"
+                />
+              </div>
+              <div className="sm:col-span-3">
+                <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                  Job / Internship Description & Details
+                </label>
+                <textarea
+                  rows={2}
+                  value={singleJobDraft.description}
+                  onChange={(e) =>
+                    setSingleJobDraft({ ...singleJobDraft, description: e.target.value })
+                  }
+                  placeholder="Enter key responsibilities, eligibility, and role details..."
+                  className="w-full rounded-xl border border-purple-200 bg-white px-3 py-2 text-xs"
+                />
+              </div>
+              <div className="sm:col-span-3 flex justify-end">
+                <Button type="submit" variant="primary" size="sm" className="text-xs font-bold">
+                  <Plus className="w-3.5 h-3.5" /> Add Row to Staging Preview
+                </Button>
+              </div>
+            </form>
+          )}
+
+          {/* Staged Rows Preview & Publish Controls */}
+          {parsedSheetRows.length > 0 && (
+            <div className="space-y-4 pt-2 border-t border-purple-100">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs font-bold text-slate-900">
+                    Staged Sheet Preview ({parsedSheetRows.length} rows —{' '}
+                    <span className="text-emerald-700">{validStagedCount} valid</span>)
+                  </span>
+                  {uploadedFileName && (
+                    <span className="rounded-lg bg-purple-50 border border-purple-200 px-2.5 py-0.5 text-[11px] font-semibold text-[#6C3CE1]">
+                      Source: {uploadedFileName}
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <select
+                    value={uploadMode}
+                    onChange={(e) => setUploadMode(e.target.value as 'append' | 'replace')}
+                    className="rounded-xl border border-purple-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700"
+                  >
+                    <option value="append">Mode: Prepend to Live Job Hunter Feed</option>
+                    <option value="replace">Mode: Replace Entire Job Hunter Feed</option>
+                  </select>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setParsedSheetRows([]);
+                      setUploadedFileName('');
+                    }}
+                    className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer"
+                  >
+                    Clear Preview
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={publishingJobs || validStagedCount === 0}
+                    onClick={handlePublishStagedJobs}
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-[#6C3CE1] hover:bg-[#5829C7] disabled:opacity-50 px-4 py-2 text-xs font-bold text-white shadow-sm cursor-pointer"
+                  >
+                    <Check className="w-4 h-4" />
+                    <span>
+                      {publishingJobs
+                        ? 'Publishing to Job Hunter...'
+                        : `Publish ${validStagedCount} Posting(s) to Job Hunter`}
+                    </span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="overflow-x-auto rounded-xl border border-purple-100 max-h-80">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="border-b border-purple-100 bg-slate-50 text-slate-500 font-semibold sticky top-0">
+                      <th className="py-2.5 px-3">Row</th>
+                      <th className="py-2.5 px-3">Validation</th>
+                      <th className="py-2.5 px-3">Company Name</th>
+                      <th className="py-2.5 px-3">Role / Title</th>
+                      <th className="py-2.5 px-3">Type</th>
+                      <th className="py-2.5 px-3">Location</th>
+                      <th className="py-2.5 px-3">Salary / Stipend</th>
+                      <th className="py-2.5 px-3">Applying Link</th>
+                      <th className="py-2.5 px-3 text-right">Remove</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-purple-50">
+                    {parsedSheetRows.map((row, idx) => (
+                      <tr
+                        key={`${row.job.id}_${idx}`}
+                        className={row.valid ? 'hover:bg-[#FAF8FF]' : 'bg-rose-50/50'}
+                      >
+                        <td className="py-2.5 px-3 font-mono text-slate-400">#{row.rowNumber}</td>
+                        <td className="py-2.5 px-3">
+                          {row.valid ? (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
+                              <Check className="w-3 h-3" /> READY
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-bold text-rose-700">
+                              {row.errors.join(', ')}
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-3 font-bold text-slate-900">{row.job.company}</td>
+                        <td className="py-2.5 px-3 font-semibold text-slate-800">
+                          {row.job.title}
+                        </td>
+                        <td className="py-2.5 px-3">
+                          <Badge
+                            variant={
+                              row.job.employment_type === 'internship' ? 'amber' : 'purple'
+                            }
+                            size="sm"
+                          >
+                            {row.job.employment_type.toUpperCase()}
+                          </Badge>
+                        </td>
+                        <td className="py-2.5 px-3 text-slate-600">{row.job.location}</td>
+                        <td className="py-2.5 px-3 font-semibold text-emerald-700">
+                          {row.job.salary_range}
+                        </td>
+                        <td className="py-2.5 px-3 max-w-[180px] truncate">
+                          <a
+                            href={row.job.apply_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 text-[#6C3CE1] hover:underline font-mono text-[11px]"
+                          >
+                            <span className="truncate max-w-[140px]">{row.job.apply_url}</span>
+                            <ExternalLink className="w-3 h-3 shrink-0" />
+                          </a>
+                        </td>
+                        <td className="py-2.5 px-3 text-right">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setParsedSheetRows((prev) => prev.filter((_, i) => i !== idx))
+                            }
+                            className="p-1 text-slate-400 hover:text-rose-600 cursor-pointer"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </Card>
+
+        {/* Live Cached Jobs & Daily Postings Table */}
+        <Card className="p-6 bg-white border border-purple-100 shadow-soft space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h4 className="font-bold text-sm text-slate-900">
+                Live Job Hunter Feed ({jobsList.length} Active Listings)
+              </h4>
+              <p className="text-xs text-slate-500">
+                All rows below are currently live on the users' Job Hunter page.
+              </p>
+            </div>
+          </div>
+
           {jobsList.length === 0 ? (
             <div className="py-12 text-center text-xs text-slate-400">
-              No cached jobs found. Click "Trigger Manual Job Fetch" above.
+              No cached jobs found. Upload an Excel sheet or click "Sync External Job API" above.
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -445,8 +1102,10 @@ export const AdminSubSections: React.FC<AdminSubSectionsProps> = ({
                   <tr className="border-b border-purple-100 text-slate-400 font-semibold">
                     <th className="py-3 pr-3">Role Title</th>
                     <th className="py-3 px-3">Company</th>
+                    <th className="py-3 px-3">Type</th>
                     <th className="py-3 px-3">Sector</th>
                     <th className="py-3 px-3">Location</th>
+                    <th className="py-3 px-3">Applying Link</th>
                     <th className="py-3 px-3">Posted At</th>
                     <th className="py-3 pl-3 text-right">Moderation</th>
                   </tr>
@@ -454,16 +1113,51 @@ export const AdminSubSections: React.FC<AdminSubSectionsProps> = ({
                 <tbody className="divide-y divide-purple-50">
                   {jobsList.map((job) => (
                     <tr key={job.id} className="hover:bg-[#FAF8FF]">
-                      <td className="py-3.5 pr-3 font-bold text-slate-900">{job.title}</td>
+                      <td className="py-3.5 pr-3">
+                        <div className="font-bold text-slate-900">{job.title}</div>
+                        {job.tags?.includes('Admin Daily Posting') && (
+                          <span className="inline-block mt-0.5 rounded bg-emerald-50 border border-emerald-200 px-1.5 py-0.2 text-[9px] font-bold text-emerald-700">
+                            Excel / Sheet Upload
+                          </span>
+                        )}
+                      </td>
                       <td className="py-3.5 px-3 font-semibold text-slate-700">{job.company}</td>
+                      <td className="py-3.5 px-3">
+                        <Badge
+                          variant={job.employment_type === 'internship' ? 'amber' : 'green'}
+                          size="sm"
+                        >
+                          {(job.employment_type || job.job_type || 'Full-time').toUpperCase()}
+                        </Badge>
+                      </td>
                       <td className="py-3.5 px-3">
                         <Badge variant="purple" size="sm">
                           {job.sector}
                         </Badge>
                       </td>
                       <td className="py-3.5 px-3 text-slate-600">{job.location}</td>
-                      <td className="py-3.5 px-3 text-slate-500">
-                        {new Date(job.posted_at).toLocaleString()}
+                      <td className="py-3.5 px-3">
+                        {job.apply_url ? (
+                          <a
+                            href={job.apply_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 text-[#6C3CE1] hover:underline font-mono text-[11px]"
+                          >
+                            <span className="truncate max-w-[140px]">{job.apply_url}</span>
+                            <ExternalLink className="w-3 h-3 shrink-0" />
+                          </a>
+                        ) : (
+                          <span className="text-slate-400">—</span>
+                        )}
+                      </td>
+                      <td className="py-3.5 px-3 text-slate-500 whitespace-nowrap">
+                        {new Date(job.posted_at).toLocaleDateString('en-IN', {
+                          day: '2-digit',
+                          month: 'short',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
                       </td>
                       <td className="py-3.5 pl-3 text-right">
                         <button
@@ -471,17 +1165,21 @@ export const AdminSubSections: React.FC<AdminSubSectionsProps> = ({
                             onConfirmAction({
                               title: 'Remove Spam / Delist Job',
                               message: `Remove "${job.title}" at ${job.company} from the cached jobs table?`,
-                              confirmLabel: 'Remove Spam Job',
+                              confirmLabel: 'Remove Job',
                               onConfirm: async () => {
-                                await fetch(`/api/admin/jobs/${job.id}`, { method: 'DELETE' });
+                                await fetch(`/api/admin/jobs/${job.id}`, {
+                                  method: 'DELETE',
+                                  headers: authHeaders,
+                                });
+                                preloadJobs();
                                 showToast(`Removed job "${job.title}" and logged to audit_logs.`);
                                 await onRefreshAll();
                               },
                             })
                           }
-                          className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-red-50 text-red-600 font-bold hover:bg-red-100 transition-colors"
+                          className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-red-50 text-red-600 font-bold hover:bg-red-100 transition-colors cursor-pointer"
                         >
-                          <Trash2 className="w-3.5 h-3.5" /> Remove Spam
+                          <Trash2 className="w-3.5 h-3.5" /> Remove
                         </button>
                       </td>
                     </tr>
@@ -1156,6 +1854,188 @@ export const AdminSubSections: React.FC<AdminSubSectionsProps> = ({
           </Card>
         </div>
       </form>
+
+      {/* Hostinger & AWS Cloud Migration & Unified Schema Hub */}
+      <Card className="p-6 bg-white border border-purple-100 shadow-soft space-y-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-purple-100 pb-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <Database className="w-4 h-4 text-[#6C3CE1]" />
+              <h4 className="font-bold text-sm text-slate-900">
+                Unified Single-File Schema & Cloud Portability Hub (Hostinger / AWS)
+              </h4>
+              <Badge variant="purple" size="sm">
+                {UNIFIED_SCHEMA_TABLES.length} Tables Consolidated
+              </Badge>
+            </div>
+            <p className="text-xs text-slate-500 mt-1">
+              All database tables, TypeScript models, and SQL DDL are consolidated into{' '}
+              <code className="px-1.5 py-0.5 rounded bg-[#F4F0FF] text-[#6C3CE1] font-mono text-[11px]">
+                src/schema/unifiedDataSchema.ts
+              </code>{' '}
+              and{' '}
+              <code className="px-1.5 py-0.5 rounded bg-[#F4F0FF] text-[#6C3CE1] font-mono text-[11px]">
+                supabase/schema.sql
+              </code>
+              . Export ready-to-run SQL + live data for instant migration to Hostinger or AWS.
+            </p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+          {[
+            {
+              id: 'mysql',
+              title: 'Hostinger MySQL 8.0',
+              subtitle: 'InnoDB utf8mb4 DDL + Live Data INSERTs for phpMyAdmin / Hostinger VPS',
+              badge: 'Hostinger Ready',
+            },
+            {
+              id: 'postgres',
+              title: 'AWS RDS PostgreSQL',
+              subtitle: 'PostgreSQL 15+ / Aurora / Supabase DDL + Live Data Upserts',
+              badge: 'AWS Ready',
+            },
+            {
+              id: 'sqlite',
+              title: 'Portable SQLite 3',
+              subtitle: 'Zero-config SQLite file schema for AWS Lightsail, EC2, or Docker',
+              badge: 'Lightweight',
+            },
+            {
+              id: 'json',
+              title: 'Full JSON Snapshot',
+              subtitle: 'Complete state backup (Users, Jobs, Gateways, Invoices, Settings)',
+              badge: '1-Click Restore',
+            },
+          ].map((target) => (
+            <div
+              key={target.id}
+              className="p-4 rounded-2xl bg-[#FAF8FF] border border-purple-100 flex flex-col justify-between gap-3"
+            >
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-bold text-xs text-slate-900 flex items-center gap-1.5">
+                    <Server className="w-3.5 h-3.5 text-[#6C3CE1]" />
+                    {target.title}
+                  </span>
+                  <Badge variant="purple" size="sm">
+                    {target.badge}
+                  </Badge>
+                </div>
+                <p className="text-[11px] text-slate-500 leading-relaxed">{target.subtitle}</p>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={async () => {
+                  try {
+                    const headers = getAuthHeaders ? getAuthHeaders() : {};
+                    const res = await fetch(
+                      `/api/admin/schema/export?dialect=${target.id}&includeData=true`,
+                      { headers }
+                    );
+                    if (!res.ok) {
+                      showToast('Failed to export schema.');
+                      return;
+                    }
+                    const blob = await res.blob();
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download =
+                      target.id === 'mysql'
+                        ? 'CareerWave-Hostinger-MySQL-Migration.sql'
+                        : target.id === 'postgres'
+                        ? 'CareerWave-AWS-PostgreSQL-Migration.sql'
+                        : target.id === 'sqlite'
+                        ? 'CareerWave-Portable-SQLite-Migration.sql'
+                        : 'CareerWave-Portable-Full-Snapshot.json';
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    setTimeout(() => URL.revokeObjectURL(url), 2000);
+                    showToast(`Downloaded ${target.title} migration bundle.`);
+                  } catch {
+                    showToast('Error downloading migration bundle.');
+                  }
+                }}
+                className="w-full text-xs font-bold bg-white"
+              >
+                <Download className="w-3.5 h-3.5" /> Download {target.id === 'json' ? '.JSON' : '.SQL'}
+              </Button>
+            </div>
+          ))}
+        </div>
+
+        {/* Canonical Table Registry Preview */}
+        <div className="pt-2">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-bold text-slate-700">
+              Canonical Unified Schema Registry ({UNIFIED_SCHEMA_TABLES.length} Tables)
+            </span>
+            <label className="inline-flex items-center gap-1.5 text-xs font-bold text-[#6C3CE1] hover:underline cursor-pointer">
+              <Upload className="w-3.5 h-3.5" />
+              Restore JSON Snapshot
+              <input
+                type="file"
+                accept=".json"
+                className="hidden"
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  try {
+                    const text = await file.text();
+                    const parsed = JSON.parse(text);
+                    const headers = {
+                      'Content-Type': 'application/json',
+                      ...(getAuthHeaders ? getAuthHeaders() : {}),
+                    };
+                    const res = await fetch('/api/admin/schema/import-json', {
+                      method: 'POST',
+                      headers,
+                      body: JSON.stringify(parsed),
+                    });
+                    const json = await res.json();
+                    if (res.ok && json.success) {
+                      showToast(json.message || 'Snapshot restored!');
+                      await onRefreshAll();
+                    } else {
+                      showToast(json.error || 'Failed to restore snapshot.');
+                    }
+                  } catch {
+                    showToast('Invalid JSON snapshot file.');
+                  }
+                  e.target.value = '';
+                }}
+              />
+            </label>
+          </div>
+          <div className="max-h-56 overflow-y-auto rounded-xl border border-purple-100">
+            <table className="w-full text-left border-collapse text-xs">
+              <thead className="bg-[#FAF8FF] sticky top-0 border-b border-purple-100 text-slate-500 font-semibold">
+                <tr>
+                  <th className="py-2 px-3">Table Name</th>
+                  <th className="py-2 px-3">Domain</th>
+                  <th className="py-2 px-3">Columns</th>
+                  <th className="py-2 px-3">Description</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-purple-50 bg-white">
+                {UNIFIED_SCHEMA_TABLES.map((t) => (
+                  <tr key={t.tableName} className="hover:bg-[#FAF8FF]">
+                    <td className="py-2 px-3 font-mono font-bold text-[#6C3CE1]">{t.tableName}</td>
+                    <td className="py-2 px-3 text-slate-700 font-medium whitespace-nowrap">{t.domain}</td>
+                    <td className="py-2 px-3 text-slate-600">{t.columns.length} cols</td>
+                    <td className="py-2 px-3 text-slate-500">{t.description}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </Card>
     </div>
   );
 };

@@ -1,12 +1,4 @@
-import {
-  Document,
-  Packer,
-  Paragraph,
-  TextRun,
-  HeadingLevel,
-  AlignmentType,
-  BorderStyle,
-} from 'docx';
+import type { Paragraph as ParagraphType } from 'docx';
 import {
   StructuredResumeData,
   AtsReadabilityVerificationReport,
@@ -30,6 +22,16 @@ export async function exportResumeToDocx(
   resume: StructuredResumeData,
   filename?: string
 ): Promise<{ blob: Blob; verificationReport: AtsReadabilityVerificationReport }> {
+  const {
+    Document,
+    Packer,
+    Paragraph,
+    TextRun,
+    HeadingLevel,
+    AlignmentType,
+    BorderStyle,
+  } = await import('docx');
+
   const contact = resume?.contact || {
     fullName: 'Candidate',
     email: '',
@@ -61,7 +63,7 @@ export async function exportResumeToDocx(
     contact.portfolio,
   ].filter(Boolean) as string[];
 
-  const buildSectionParagraphs = (sec: ResumeSectionId): Paragraph[] => {
+  const buildSectionParagraphs = (sec: ResumeSectionId): ParagraphType[] => {
     switch (sec) {
       case 'summary':
         if (!summary.trim()) return [];

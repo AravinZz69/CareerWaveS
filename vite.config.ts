@@ -11,6 +11,23 @@ export default defineConfig(() => {
         '@': path.resolve(__dirname, '.'),
       },
     },
+    build: {
+      target: 'es2022',
+      chunkSizeWarningLimit: 800,
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (id.includes('node_modules')) {
+              if (id.includes('xlsx')) return 'vendor-xlsx';
+              if (id.includes('docx')) return 'vendor-docx';
+              if (id.includes('@supabase')) return 'vendor-supabase';
+              if (id.includes('lucide-react')) return 'vendor-icons';
+              if (id.includes('react') || id.includes('scheduler')) return 'vendor-react';
+            }
+          },
+        },
+      },
+    },
     server: {
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
       // Do not modify—file watching is disabled to prevent flickering during agent edits.

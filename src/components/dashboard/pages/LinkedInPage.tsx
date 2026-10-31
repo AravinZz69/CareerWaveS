@@ -213,10 +213,6 @@ export const LinkedInPage: React.FC = () => {
       {/* Header */}
       <div className="bg-white p-6 rounded-3xl border border-purple-100 shadow-soft flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#0077B5]/10 text-[#0077B5] text-xs font-semibold mb-2">
-            <Linkedin className="w-3.5 h-3.5" />
-            <span>Recruiter Search & Profile Optimizer</span>
-          </div>
           <h2 className="text-2xl font-bold font-serif-heading text-slate-900">
             LinkedIn Persona & SEO Studio
           </h2>

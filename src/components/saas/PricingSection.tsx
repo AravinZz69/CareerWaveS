@@ -17,7 +17,7 @@ interface PricingSectionProps {
 export const PricingSection: React.FC<PricingSectionProps> = ({
   onNavigateToDashboard,
 }) => {
-  const { user, plan: currentPlan, plans, checkoutPlan } = useAuth();
+  const { user, plan: currentPlan, plans, checkoutPlan, openUpgradeModal } = useAuth();
   const [interval, setInterval] = useState<'month' | 'year'>('month');
   const [loadingPlan, setLoadingPlan] = useState<PlanName | null>(null);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
@@ -80,11 +80,15 @@ export const PricingSection: React.FC<PricingSectionProps> = ({
       onNavigateToDashboard?.('settings');
       return;
     }
+    if (planName === 'Pro' || planName === 'Premium') {
+      openUpgradeModal();
+      return;
+    }
     setLoadingPlan(planName);
     const ok = await checkoutPlan(planName, interval);
     setLoadingPlan(null);
     if (ok) {
-      setToastMsg(`Successfully upgraded to ${planName} (${interval === 'year' ? 'Annual' : 'Monthly'})!`);
+      setToastMsg(`Switched to ${planName} plan!`);
       setTimeout(() => setToastMsg(null), 4000);
     }
   };

@@ -133,7 +133,7 @@ export const TopBar: React.FC<TopBarProps> = ({
         </button>
       </div>
 
-      {/* Right: Plan Badge, Notifications, Profile Dropdown (OpenRouter visible to Admin only) */}
+      {/* Right: Notifications, Profile Dropdown (OpenRouter visible to Admin only) */}
       <div className="flex items-center gap-2.5">
         {role === 'admin' && (
           <button
@@ -157,15 +157,6 @@ export const TopBar: React.FC<TopBarProps> = ({
             )}
           </button>
         )}
-
-        <button
-          type="button"
-          onClick={() => openUpgradeModal()}
-          className="hidden sm:inline-flex items-center gap-1.5 rounded-xl bg-slate-100 border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-800 hover:bg-slate-200 transition-colors cursor-pointer"
-        >
-          <Sparkles className="h-3.5 w-3.5 text-slate-600" />
-          <span>{plan} Plan</span>
-        </button>
 
         {/* Notifications Bell */}
         <div className="relative">

@@ -159,10 +159,6 @@ export const RoadmapPage: React.FC = () => {
       {/* Target Role & Interests Selector Header */}
       <div className="bg-white p-6 rounded-3xl border border-purple-100 shadow-soft space-y-5">
         <div>
-          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#F4F0FF] text-[#6C3CE1] text-xs font-semibold mb-2">
-            <Sparkles className="w-3.5 h-3.5" />
-            <span>Career Track & Skill Gap Analyzer</span>
-          </div>
           <h2 className="text-2xl font-bold font-serif-heading text-slate-900">
             Career Roadmap & Skill Gap Engine
           </h2>

@@ -1351,4 +1351,110 @@ ON CONFLICT (slug) DO UPDATE SET
   lessons = EXCLUDED.lessons,
   quiz_questions = EXCLUDED.quiz_questions;
 
+-- ============================================================================
+-- 10. MULTI-SOURCE JOB QUERY CACHE & DYNAMIC MULTI-GATEWAY PAYMENTS
+-- ============================================================================
+
+-- 10.1 job_query_cache (30-minute query deduplication cache)
+CREATE TABLE IF NOT EXISTS public.job_query_cache (
+  query_hash TEXT PRIMARY KEY,
+  query_params JSONB NOT NULL DEFAULT '{}'::jsonb,
+  job_ids TEXT[] NOT NULL DEFAULT '{}',
+  sources_status JSONB NOT NULL DEFAULT '[]'::jsonb,
+  fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE public.job_query_cache ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "job_query_cache_read_authenticated" ON public.job_query_cache;
+CREATE POLICY "job_query_cache_read_authenticated"
+  ON public.job_query_cache FOR SELECT TO authenticated
+  USING (TRUE);
+
+-- 10.2 payment_gateways (Dynamic Razorpay, Cashfree, Direct UPI configurations)
+CREATE TABLE IF NOT EXISTS public.payment_gateways (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  gateway_name TEXT NOT NULL UNIQUE CHECK (gateway_name IN ('razorpay', 'cashfree', 'upi')),
+  display_name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  environment TEXT NOT NULL DEFAULT 'sandbox' CHECK (environment IN ('sandbox', 'live')),
+  credentials JSONB NOT NULL DEFAULT '{}'::jsonb,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_by TEXT
+);
+
+-- 10.3 payment_orders (Dynamic checkout orders & webhook verification ledger)
+CREATE TABLE IF NOT EXISTS public.payment_orders (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  user_email TEXT NOT NULL,
+  user_name TEXT NOT NULL DEFAULT '',
+  plan_name TEXT NOT NULL,
+  billing_interval TEXT NOT NULL DEFAULT 'month' CHECK (billing_interval IN ('month', 'year')),
+  amount NUMERIC NOT NULL,
+  currency TEXT NOT NULL DEFAULT 'INR',
+  gateway_name TEXT NOT NULL CHECK (gateway_name IN ('razorpay', 'cashfree', 'upi')),
+  environment TEXT NOT NULL DEFAULT 'sandbox' CHECK (environment IN ('sandbox', 'live')),
+  provider_order_id TEXT,
+  provider_payment_id TEXT,
+  upi_uri TEXT,
+  utr_number TEXT,
+  status TEXT NOT NULL DEFAULT 'created' CHECK (status IN ('created', 'pending', 'paid', 'failed')),
+  webhook_payload JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE public.payment_gateways ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.payment_orders ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Admins manage payment_gateways" ON public.payment_gateways;
+CREATE POLICY "Admins manage payment_gateways"
+  ON public.payment_gateways FOR ALL TO authenticated
+  USING (public.has_role(auth.uid(), 'admin'))
+  WITH CHECK (public.has_role(auth.uid(), 'admin'));
+
+DROP POLICY IF EXISTS "Users read own payment_orders" ON public.payment_orders;
+CREATE POLICY "Users read own payment_orders"
+  ON public.payment_orders FOR SELECT TO authenticated
+  USING (user_id = auth.uid()::text OR public.has_role(auth.uid(), 'admin'));
+
+DROP POLICY IF EXISTS "Admins manage all payment_orders" ON public.payment_orders;
+CREATE POLICY "Admins manage all payment_orders"
+  ON public.payment_orders FOR ALL TO authenticated
+  USING (public.has_role(auth.uid(), 'admin'))
+  WITH CHECK (public.has_role(auth.uid(), 'admin'));
+
+INSERT INTO public.payment_gateways (gateway_name, display_name, description, is_active, environment, credentials, updated_by)
+VALUES
+  (
+    'razorpay',
+    'Razorpay Checkout',
+    'Accept UPI, Credit/Debit Cards, NetBanking, and Wallets via Razorpay Standard Checkout.',
+    TRUE,
+    'sandbox',
+    '{"key_id": "rzp_test_CareerWave9X2A", "key_secret": "rzp_secret_test_89a7c6b5d4e3f2", "webhook_secret": "whsec_rzp_careerwave_live"}'::jsonb,
+    'admin@careerwave.in'
+  ),
+  (
+    'cashfree',
+    'Cashfree Payments',
+    'Instant seamless checkout with Cashfree PG Orders API, Cards, UPI & NetBanking.',
+    TRUE,
+    'sandbox',
+    '{"app_id": "TEST1029384756CAREERWAVE", "secret_key": "cfsk_ma_test_98a7b6c5d4e3f2g1h0", "webhook_secret": "whsec_cf_careerwave_live"}'::jsonb,
+    'admin@careerwave.in'
+  ),
+  (
+    'upi',
+    'Direct UPI (Intent / QR)',
+    'Zero-MDR Direct NPCI UPI Intent link & Dynamic VPA QR Code for Google Pay, PhonePe, Paytm & BHIM.',
+    TRUE,
+    'live',
+    '{"vpa": "careerwave.ai@okaxis", "merchant_name": "CareerWave Technologies", "mcc": "5734"}'::jsonb,
+    'admin@careerwave.in'
+  )
+ON CONFLICT (gateway_name) DO NOTHING;
+
 COMMIT;

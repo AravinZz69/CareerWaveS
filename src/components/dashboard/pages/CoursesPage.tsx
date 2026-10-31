@@ -10,7 +10,6 @@ import {
   Star,
   Clock,
   PlayCircle,
-  GraduationCap,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
@@ -73,10 +72,6 @@ export const CoursesPage: React.FC = () => {
       <div className="bg-white p-6 rounded-3xl border border-purple-100 shadow-soft space-y-5">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
-            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#F4F0FF] text-[#6C3CE1] text-xs font-semibold mb-2">
-              <GraduationCap className="w-3.5 h-3.5" />
-              <span>12 Accredited Industry Labs & Certifications</span>
-            </div>
             <h2 className="text-2xl font-bold font-serif-heading text-slate-900">
               Course Marketplace & Video Labs
             </h2>

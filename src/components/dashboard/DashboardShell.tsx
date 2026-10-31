@@ -1,22 +1,48 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense, lazy } from 'react';
 import { Sidebar } from './Sidebar';
 import { TopBar } from './TopBar';
 import { OverviewPage } from './pages/OverviewPage';
-import { ResumePage } from './pages/ResumePage';
-import { JobsPage } from './pages/JobsPage';
-import { ApplicationsPage } from './pages/ApplicationsPage';
-import { InterviewPrepPage } from './pages/InterviewPrepPage';
-import { RoadmapPage } from './pages/RoadmapPage';
-import { ProjectsPage } from './pages/ProjectsPage';
-import { CoursesPage } from './pages/CoursesPage';
-import { LinkedInPage } from './pages/LinkedInPage';
-import { PortfolioPage } from './pages/PortfolioPage';
-import { SettingsPage } from './pages/SettingsPage';
-import { AdminPage } from './pages/AdminPage';
-import { GlobalSearchModal } from '../search/GlobalSearchModal';
 import { useAuth } from '../../context/AuthContext';
 import { useSidebarController } from '../../hooks/useSidebarController';
 import { Megaphone, X } from 'lucide-react';
+
+// Lazy-load heavy feature pages so users only download the active module chunk
+const ResumePage = lazy(() =>
+  import('./pages/ResumePage').then((m) => ({ default: m.ResumePage }))
+);
+const JobsPage = lazy(() =>
+  import('./pages/JobsPage').then((m) => ({ default: m.JobsPage }))
+);
+const ApplicationsPage = lazy(() =>
+  import('./pages/ApplicationsPage').then((m) => ({ default: m.ApplicationsPage }))
+);
+const InterviewPrepPage = lazy(() =>
+  import('./pages/InterviewPrepPage').then((m) => ({ default: m.InterviewPrepPage }))
+);
+const RoadmapPage = lazy(() =>
+  import('./pages/RoadmapPage').then((m) => ({ default: m.RoadmapPage }))
+);
+const ProjectsPage = lazy(() =>
+  import('./pages/ProjectsPage').then((m) => ({ default: m.ProjectsPage }))
+);
+const CoursesPage = lazy(() =>
+  import('./pages/CoursesPage').then((m) => ({ default: m.CoursesPage }))
+);
+const LinkedInPage = lazy(() =>
+  import('./pages/LinkedInPage').then((m) => ({ default: m.LinkedInPage }))
+);
+const PortfolioPage = lazy(() =>
+  import('./pages/PortfolioPage').then((m) => ({ default: m.PortfolioPage }))
+);
+const SettingsPage = lazy(() =>
+  import('./pages/SettingsPage').then((m) => ({ default: m.SettingsPage }))
+);
+const AdminPage = lazy(() =>
+  import('./pages/AdminPage').then((m) => ({ default: m.AdminPage }))
+);
+const GlobalSearchModal = lazy(() =>
+  import('../search/GlobalSearchModal').then((m) => ({ default: m.GlobalSearchModal }))
+);
 
 export type DashboardPageId =
   | 'overview'
@@ -38,6 +64,13 @@ interface DashboardShellProps {
   onExitToLanding: () => void;
   onOpenLegal?: (tab: 'terms' | 'privacy' | 'refund') => void;
 }
+
+const PageLoaderFallback: React.FC = () => (
+  <div className="py-16 flex flex-col items-center justify-center gap-3">
+    <div className="w-7 h-7 rounded-full border-2 border-[#6C3CE1] border-t-transparent animate-spin" />
+    <span className="text-xs font-medium text-slate-500">Loading module...</span>
+  </div>
+);
 
 export const DashboardShell: React.FC<DashboardShellProps> = ({
   activePage,
@@ -86,10 +119,12 @@ export const DashboardShell: React.FC<DashboardShellProps> = ({
   // If the authenticated user is an admin, render ONLY the Admin Panel Dashboard
   if (role === 'admin') {
     return (
-      <AdminPage
-        onNavigateToOverview={onExitToLanding}
-        onExitToLanding={onExitToLanding}
-      />
+      <Suspense fallback={<PageLoaderFallback />}>
+        <AdminPage
+          onNavigateToOverview={onExitToLanding}
+          onExitToLanding={onExitToLanding}
+        />
+      </Suspense>
     );
   }
 
@@ -155,46 +190,52 @@ export const DashboardShell: React.FC<DashboardShellProps> = ({
 
         <main className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 lg:p-8 pb-20 lg:pb-8">
           <div className="max-w-7xl w-full mx-auto">
-            {effectivePage === 'overview' && (
-              <OverviewPage onNavigate={onSelectPage} />
-            )}
-            {effectivePage === 'resume' && (
-              <ResumePage
-                initialJobToTailor={tailorJobContext}
-                onClearInitialJob={() => setTailorJobContext(null)}
-              />
-            )}
-            {effectivePage === 'jobs' && (
-              <JobsPage
-                onTailorResume={handleTailorResumeForJob}
-                onNavigateToApplications={() => onSelectPage('applications')}
-                onNavigateToResume={() => onSelectPage('resume')}
-              />
-            )}
-            {effectivePage === 'applications' && (
-              <ApplicationsPage onNavigateToJobs={() => onSelectPage('jobs')} />
-            )}
-            {effectivePage === 'interviews' && <InterviewPrepPage />}
-            {effectivePage === 'roadmap' && <RoadmapPage />}
-            {effectivePage === 'projects' && <ProjectsPage />}
-            {effectivePage === 'courses' && <CoursesPage />}
-            {effectivePage === 'linkedin' && <LinkedInPage />}
-            {effectivePage === 'portfolio' && <PortfolioPage />}
-            {effectivePage === 'settings' && (
-              <SettingsPage onOpenLegal={onOpenLegal} />
-            )}
+            <Suspense fallback={<PageLoaderFallback />}>
+              {effectivePage === 'overview' && (
+                <OverviewPage onNavigate={onSelectPage} />
+              )}
+              {effectivePage === 'resume' && (
+                <ResumePage
+                  initialJobToTailor={tailorJobContext}
+                  onClearInitialJob={() => setTailorJobContext(null)}
+                />
+              )}
+              {effectivePage === 'jobs' && (
+                <JobsPage
+                  onTailorResume={handleTailorResumeForJob}
+                  onNavigateToApplications={() => onSelectPage('applications')}
+                  onNavigateToResume={() => onSelectPage('resume')}
+                />
+              )}
+              {effectivePage === 'applications' && (
+                <ApplicationsPage onNavigateToJobs={() => onSelectPage('jobs')} />
+              )}
+              {effectivePage === 'interviews' && <InterviewPrepPage />}
+              {effectivePage === 'roadmap' && <RoadmapPage />}
+              {effectivePage === 'projects' && <ProjectsPage />}
+              {effectivePage === 'courses' && <CoursesPage />}
+              {effectivePage === 'linkedin' && <LinkedInPage />}
+              {effectivePage === 'portfolio' && <PortfolioPage />}
+              {effectivePage === 'settings' && (
+                <SettingsPage onOpenLegal={onOpenLegal} />
+              )}
+            </Suspense>
           </div>
         </main>
       </div>
 
-      <GlobalSearchModal
-        isOpen={searchOpen}
-        onClose={() => setSearchOpen(false)}
-        onNavigate={(page) => {
-          setSearchOpen(false);
-          onSelectPage(page as DashboardPageId);
-        }}
-      />
+      {searchOpen && (
+        <Suspense fallback={null}>
+          <GlobalSearchModal
+            isOpen={searchOpen}
+            onClose={() => setSearchOpen(false)}
+            onNavigate={(page) => {
+              setSearchOpen(false);
+              onSelectPage(page as DashboardPageId);
+            }}
+          />
+        </Suspense>
+      )}
     </div>
   );
 };

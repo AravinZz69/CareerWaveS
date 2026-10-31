@@ -6,6 +6,7 @@ import { Badge } from '../../ui/Badge';
 import { Skeleton } from '../../ui/SkeletonLoader';
 import { AdminSubSections } from './AdminSubSections';
 import { AdminAtsGoldenTestSection } from './AdminAtsGoldenTestSection';
+import { AdminPaymentGatewaysSection } from './AdminPaymentGatewaysSection';
 import {
   Shield,
   Lock,
@@ -40,9 +41,11 @@ import {
   LogOut,
   Menu,
   FlaskConical,
+  Download,
 } from 'lucide-react';
 import { PlanName, UsageFeature } from '../../../lib/supabase';
 import { formatINR } from '../../../utils/currency';
+import { downloadSubscriptionInvoicePdf } from '../../../utils/invoicePdf';
 import { useSidebarController } from '../../../hooks/useSidebarController';
 import { OpenRouterConfigModal } from '../../common/OpenRouterConfigModal';
 
@@ -53,6 +56,7 @@ interface AdminPageProps {
 
 type AdminSectionId =
   | 'overview'
+  | 'payment-gateways'
   | 'ats-test'
   | 'users'
   | 'billing'
@@ -283,12 +287,13 @@ export const AdminPage: React.FC<AdminPageProps> = ({
 
   const navSections: { id: AdminSectionId; label: string; icon: any; badge?: string | number }[] = [
     { id: 'overview', label: 'Overview & KPIs', icon: LayoutDashboard },
+    { id: 'payment-gateways', label: 'Payment Gateways', icon: CreditCard, badge: '3 Gateways' },
     { id: 'ats-test', label: 'ATS Golden Test & Taxonomy', icon: FlaskConical, badge: '10×5' },
     { id: 'users', label: 'Users & Quotas', icon: Users, badge: usersList.length },
     {
       id: 'billing',
       label: 'Subscriptions & Billing',
-      icon: CreditCard,
+      icon: DollarSign,
       badge: billingData.failedPayments?.length ? `${billingData.failedPayments.length}!` : undefined,
     },
     {
@@ -298,7 +303,7 @@ export const AdminPage: React.FC<AdminPageProps> = ({
       badge: usageData.highUsageAlerts?.length || undefined,
     },
     { id: 'content', label: 'Content Manager', icon: BookOpen, badge: contentItems.length },
-    { id: 'jobs', label: 'Jobs Moderation', icon: Briefcase, badge: jobsList.length },
+    { id: 'jobs', label: 'Jobs & Excel Upload', icon: Briefcase, badge: jobsList.length },
     { id: 'flags', label: 'Feature Flags', icon: Flag },
     {
       id: 'support',
@@ -1503,18 +1508,38 @@ export const AdminPage: React.FC<AdminPageProps> = ({
               )}
 
               {/* ================================================================
+                  SECTION 2.5: SUPER-ADMIN PAYMENT GATEWAYS CONTROL CENTER
+              ================================================================ */}
+              {activeSection === 'payment-gateways' && (
+                <AdminPaymentGatewaysSection showToast={showToast} />
+              )}
+
+              {/* ================================================================
                   SECTION 3: SUBSCRIPTIONS & BILLING
               ================================================================ */}
               {activeSection === 'billing' && (
                 <div className="space-y-6">
-                  <div>
-                    <h3 className="font-serif-heading font-bold text-xl text-slate-900">
-                      Plans, Subscriptions, Invoices & Failed Payments
-                    </h3>
-                    <p className="text-xs text-slate-500">
-                      Configure plan prices and monthly quota limits, inspect active subscriptions, and retry failed invoice payments.
-                    </p>
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                    <div>
+                      <h3 className="font-serif-heading font-bold text-xl text-slate-900">
+                        Plans, Subscriptions, Invoices & Payment Gateways
+                      </h3>
+                      <p className="text-xs text-slate-500">
+                        Configure plan prices, monthly quota limits, and dynamic payment gateways (Razorpay, Cashfree, Direct UPI).
+                      </p>
+                    </div>
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      onClick={() => setActiveSection('payment-gateways')}
+                      className="text-xs font-bold shrink-0"
+                    >
+                      <CreditCard className="w-3.5 h-3.5" /> Configure Payment Gateways
+                    </Button>
                   </div>
+
+                  {/* Embedded Multi-Gateway Control Center */}
+                  <AdminPaymentGatewaysSection showToast={showToast} />
 
                   {/* 3 Editable Plan Cards */}
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -1718,6 +1743,78 @@ export const AdminPage: React.FC<AdminPageProps> = ({
                       </table>
                     </div>
                   </Card>
+
+                  {/* Subscription Invoices & PDF Download Table */}
+                  <Card className="p-6 bg-white border border-purple-100 shadow-soft space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h4 className="font-bold text-sm text-slate-900">
+                          Subscription Transaction History & PDF Invoices ({billingData.invoices?.length || 0})
+                        </h4>
+                        <p className="text-[11px] text-slate-500">
+                          Generate and download official GST-compliant PDF invoices for any subscriber payment.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left border-collapse text-xs">
+                        <thead>
+                          <tr className="border-b border-purple-100 text-slate-400 font-semibold">
+                            <th className="py-2.5 pr-3">Invoice #</th>
+                            <th className="py-2.5 px-3">Subscriber</th>
+                            <th className="py-2.5 px-3">Plan</th>
+                            <th className="py-2.5 px-3">Amount</th>
+                            <th className="py-2.5 px-3">Status</th>
+                            <th className="py-2.5 px-3">Date</th>
+                            <th className="py-2.5 pl-3 text-right">PDF Invoice</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-purple-50">
+                          {(billingData.invoices || []).map((inv: any) => (
+                            <tr key={inv.id} className="hover:bg-[#FAF8FF]">
+                              <td className="py-3 pr-3 font-mono font-bold text-slate-800">
+                                {inv.id}
+                              </td>
+                              <td className="py-3 px-3">
+                                <div className="font-bold text-slate-900">{inv.user_name}</div>
+                                <div className="text-[10px] text-slate-500">{inv.user_email}</div>
+                              </td>
+                              <td className="py-3 px-3 font-semibold text-[#6C3CE1]">
+                                {inv.plan_name}
+                              </td>
+                              <td className="py-3 px-3 font-bold text-slate-900">
+                                {formatINR(inv.amount)}
+                              </td>
+                              <td className="py-3 px-3">
+                                <Badge
+                                  variant={inv.status === 'paid' ? 'green' : 'coral'}
+                                  size="sm"
+                                >
+                                  {inv.status.toUpperCase()}
+                                </Badge>
+                              </td>
+                              <td className="py-3 px-3 text-slate-500">
+                                {new Date(inv.created_at).toLocaleDateString('en-IN')}
+                              </td>
+                              <td className="py-3 pl-3 text-right">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    downloadSubscriptionInvoicePdf(inv);
+                                    showToast(`Downloaded PDF invoice #${inv.id} for ${inv.user_name}`);
+                                  }}
+                                  className="inline-flex items-center gap-1.5 rounded-xl bg-[#6C3CE1] hover:bg-[#5829C7] px-3 py-1.5 text-[11px] font-bold text-white shadow-2xs transition-colors cursor-pointer"
+                                >
+                                  <Download className="w-3.5 h-3.5" />
+                                  <span>Download PDF</span>
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </Card>
                 </div>
               )}
 
@@ -1874,6 +1971,7 @@ export const AdminPage: React.FC<AdminPageProps> = ({
                   onRefreshAll={fetchAllAdminData}
                   onConfirmAction={(cfg) => setConfirmModal(cfg)}
                   showToast={showToast}
+                  getAuthHeaders={getAuthHeaders}
                 />
               )}
             </>

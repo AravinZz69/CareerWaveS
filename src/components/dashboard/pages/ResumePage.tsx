@@ -14,8 +14,6 @@ import {
   CheckSquare,
   ShieldCheck,
   Wand2,
-  Cpu,
-  FileCheck,
   Copy,
   Check,
   RefreshCw,
@@ -1176,32 +1174,6 @@ export const ResumePage: React.FC<ResumePageProps> = ({
       {/* Top Professional Header */}
       <div className="bg-white p-6 sm:p-7 rounded-2xl border border-slate-200 shadow-xs flex flex-col lg:flex-row items-start lg:items-center justify-between gap-6">
         <div className="space-y-1.5">
-          <div className="flex items-center gap-2">
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-slate-100 text-slate-800 text-[11px] font-bold border border-slate-200 uppercase tracking-wide">
-              <FileCheck className="w-3.5 h-3.5 text-slate-700" />
-              ATS Resume Studio
-            </span>
-
-            {role === 'admin' && (
-              <button
-                type="button"
-                onClick={() => setOpenRouterModalOpen(true)}
-                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold border transition-colors cursor-pointer ${
-                  isOpenRouterConfigured
-                    ? 'bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100'
-                    : 'bg-slate-50 text-slate-700 border-slate-300 hover:bg-slate-100'
-                }`}
-              >
-                <Cpu className="w-3.5 h-3.5 text-slate-600" />
-                <span>
-                  {isOpenRouterConfigured
-                    ? `Model: ${openRouterModel.split('/').pop() || openRouterModel}`
-                    : 'AI Model: Google Gemini (Default)'}
-                </span>
-              </button>
-            )}
-          </div>
-
           <h2 className="text-2xl font-bold font-serif text-slate-900 tracking-tight">
             Deterministic Resume Intelligence & ATS Studio
           </h2>

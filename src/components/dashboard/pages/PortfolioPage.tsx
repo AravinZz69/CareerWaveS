@@ -3,7 +3,6 @@ import { Card } from '../../ui/Card';
 import { Button } from '../../ui/Button';
 import { Badge } from '../../ui/Badge';
 import {
-  Globe,
   ExternalLink,
   Sparkles,
   Palette,
@@ -181,10 +180,6 @@ export const PortfolioPage: React.FC = () => {
       {/* Top Header Card */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-6 bg-white rounded-3xl border border-purple-100 shadow-soft">
         <div>
-          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#F4F0FF] text-[#6C3CE1] text-xs font-semibold mb-2">
-            <Globe className="w-3.5 h-3.5" />
-            <span>Personal Portfolio Builder</span>
-          </div>
           <h2 className="text-xl sm:text-2xl font-bold font-serif-heading text-slate-900">
             Developer Portfolio Generator & Host
           </h2>

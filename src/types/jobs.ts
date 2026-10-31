@@ -1,96 +1,26 @@
-export type SourcePlatform =
-  | 'LinkedIn'
-  | 'Indeed'
-  | 'Apna'
-  | 'Naukri'
-  | 'Google'
-  | 'Adzuna'
-  | 'Jooble'
-  | 'Company Site';
+import type {
+  SourcePlatform,
+  EmploymentType,
+  JobDateWindow,
+  JobSortOption,
+  MatchGrade,
+  NormalizedJob,
+  JobFetchInput,
+  SourceFetchDiag,
+  JobFetchResponse,
+} from '../schema/unifiedDataSchema';
 
-export type EmploymentType = 'internship' | 'full-time' | 'part-time' | 'contract';
-
-export type JobDateWindow = '24h' | '72h' | '7d' | 'all';
-
-export type JobSortOption = 'best_match' | 'newest' | 'salary';
-
-export type MatchGrade = 'A+' | 'A' | 'B+' | 'B' | 'C' | 'D' | 'F';
-
-export interface NormalizedJob {
-  id: string;
-  external_id: string;
-  title: string;
-  company: string;
-  company_logo: string;
-  location: string;
-  is_remote: boolean;
-  remote?: boolean; // backwards-compatibility alias
-  employment_type: EmploymentType;
-  job_type?: string; // backwards-compatibility alias
-  type?: string;
-  salary_min: number | null;
-  salary_max: number | null;
-  currency: string;
-  salary_range?: string;
-  description: string;
-  responsibilities?: string[];
-  required_skills: string[];
-  requirements?: string[]; // backwards-compatibility alias
-  posted_at: string;
-  apply_url: string;
-  source_platform: SourcePlatform;
-  source?: string; // aggregator key: 'jsearch' | 'adzuna' | 'jooble' | 'verified_feed'
-  sector: string;
-  fetched_at: string;
-  tags?: string[];
-  // Resume match fields populated per user
-  hasResume?: boolean;
-  matchScore?: number | null;
-  matchGrade?: MatchGrade | null;
-  matchedSkills?: string[];
-  missingSkills?: string[];
-  matchReasons?: string[];
-}
-
-export interface JobFetchInput {
-  query?: string;
-  role?: string;
-  location?: string;
-  remote?: boolean;
-  dateWindow?: JobDateWindow;
-  timeframe?: JobDateWindow;
-  sector?: string;
-  employmentType?: EmploymentType | 'all';
-  sourcePlatform?: SourcePlatform | 'All';
-  page?: number;
-  pageSize?: number;
-  forceRefresh?: boolean;
-  resume?: any;
-}
-
-export interface SourceFetchDiag {
-  source: 'jsearch' | 'adzuna' | 'jooble' | 'cache';
-  configured: boolean;
-  ok: boolean;
-  count: number;
-  error?: string;
-  latencyMs?: number;
-}
-
-export interface JobFetchResponse {
-  success: boolean;
-  jobs: NormalizedJob[];
-  totalCount: number;
-  page: number;
-  pageSize: number;
-  hasMore: boolean;
-  hasResume: boolean;
-  fromCache: boolean;
-  cachedAt: string;
-  sources: SourceFetchDiag[];
-  partialFailure: boolean;
-  partialFailureMessage?: string;
-}
+export type {
+  SourcePlatform,
+  EmploymentType,
+  JobDateWindow,
+  JobSortOption,
+  MatchGrade,
+  NormalizedJob,
+  JobFetchInput,
+  SourceFetchDiag,
+  JobFetchResponse,
+};
 
 /**
  * Validates that an apply_url is a safe, well-formed https:// URL.
