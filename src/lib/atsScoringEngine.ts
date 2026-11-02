@@ -210,6 +210,14 @@ export function computeGeneralAtsScore(
       allBullets.join(' ').length +
       (resume?.contact?.fullName || '').length;
 
+  let cannotScoreReason: string | null = null;
+  if (serializedLength < 40 || (allSkills.length === 0 && allBullets.length === 0 && !(resume?.summary || '').trim())) {
+    cannotScoreReason =
+      serializedLength < 40
+        ? `Cannot score yet: Extracted resume text is too short (${serializedLength} characters). Please upload a complete PDF, DOCX, or TXT resume.`
+        : 'Cannot score yet: No skills, summary, or experience/project bullets could be parsed from the document.';
+  }
+
   if (serializedLength < 180) {
     parsabilityScore -= 8;
     deductions.push({
@@ -217,6 +225,7 @@ export function computeGeneralAtsScore(
       category: 'parsability',
       pointsLost: 8,
       reason: 'Extractable text volume is very low (< 180 chars). Add fuller summary and experience bullets.',
+      evidence: `Document text volume: ${serializedLength} characters`,
       fixable: true,
       fixType: 'fill-summary',
       targetSection: 'summary',
@@ -232,6 +241,7 @@ export function computeGeneralAtsScore(
       category: 'parsability',
       pointsLost: 8,
       reason: 'Multi-column layout detected; single-column templates prevent line-merging in older ATS parsers.',
+      evidence: 'Layout check: Multi-column coordinate stream detected',
       fixable: false,
     });
   } else {
@@ -245,6 +255,7 @@ export function computeGeneralAtsScore(
       category: 'parsability',
       pointsLost: 8,
       reason: 'Tables, floating text boxes, or embedded graphics detected.',
+      evidence: 'Layout check: Embedded table or floating box elements found',
       fixable: false,
     });
   } else {
@@ -258,6 +269,7 @@ export function computeGeneralAtsScore(
       category: 'parsability',
       pointsLost: 7,
       reason: 'Non-standard font detected; use standard embedded fonts (Calibri, Arial, Georgia, Inter).',
+      evidence: 'Typography check: Non-standard font family',
       fixable: false,
     });
   } else {
@@ -286,6 +298,7 @@ export function computeGeneralAtsScore(
       category: 'structure',
       pointsLost: 5,
       reason: 'Sections are not in standard ATS hierarchy (Summary → Skills → Experience → Projects → Education).',
+      evidence: `Current order: ${currentOrder.join(' → ')}`,
       fixable: true,
       fixType: 'standardize-section-order',
     });
@@ -306,6 +319,7 @@ export function computeGeneralAtsScore(
       category: 'structure',
       pointsLost: lost,
       reason: `${inconsistentDates.length} experience date range(s) use non-standard formatting (use "MMM YYYY - MMM YYYY" or "Present").`,
+      evidence: `Found date string: "${inconsistentDates[0] || 'missing date'}"`,
       fixable: true,
       fixType: 'standardize-dates',
       targetSection: 'experience',
@@ -334,6 +348,7 @@ export function computeGeneralAtsScore(
       category: 'contentQuality',
       pointsLost: 25,
       reason: 'No experience or project bullet points found.',
+      evidence: 'Section: Experience / Projects (0 bullets found)',
       fixable: false,
       targetSection: 'experience',
     });
@@ -348,11 +363,14 @@ export function computeGeneralAtsScore(
     if (actionPoints < 8) {
       const lost = 8 - actionPoints;
       contentScore -= lost;
+      const weakBulletIdx = evaluations.findIndex((e) => !e.startsWithActionVerb);
+      const quote = weakBulletIdx >= 0 ? allBullets[weakBulletIdx] : allBullets[0];
       deductions.push({
         id: 'ded-content-verbs',
         category: 'contentQuality',
         pointsLost: lost,
         reason: `${totalB - actionVerbCount} of ${totalB} bullet(s) do not start with a strong past-tense action verb.`,
+        evidence: quote ? `"${quote.slice(0, 90)}${quote.length > 90 ? '...' : ''}"` : 'Experience bullets',
         fixable: true,
         fixType: 'strengthen-action-verbs',
         targetSection: 'experience',
@@ -369,11 +387,14 @@ export function computeGeneralAtsScore(
     if (metricPoints < 8) {
       const lost = 8 - metricPoints;
       contentScore -= lost;
+      const unquantifiedIdx = evaluations.findIndex((e) => !e.hasMetric);
+      const quote = unquantifiedIdx >= 0 ? allBullets[unquantifiedIdx] : allBullets[0];
       deductions.push({
         id: 'ded-content-metrics',
         category: 'contentQuality',
         pointsLost: lost,
         reason: `Only ${metricCount} of ${totalB} bullet(s) include quantified impact metrics (%, latency, users, revenue). Aim for at least ${targetMetricCount}.`,
+        evidence: quote ? `Unquantified bullet: "${quote.slice(0, 90)}${quote.length > 90 ? '...' : ''}"` : 'Experience bullets',
         fixable: true,
         fixType: 'add-metrics',
         targetSection: 'experience',
@@ -387,11 +408,14 @@ export function computeGeneralAtsScore(
     if (badLengthCount > 0) {
       const lost = Math.min(4, Math.ceil((badLengthCount / totalB) * 4));
       contentScore -= lost;
+      const badIdx = evaluations.findIndex((e) => !e.lengthOptimal);
+      const quote = badIdx >= 0 ? allBullets[badIdx] : allBullets[0];
       deductions.push({
         id: 'ded-content-length',
         category: 'contentQuality',
         pointsLost: lost,
         reason: `${badLengthCount} bullet(s) are outside the ideal 10–34 word length window.`,
+        evidence: quote ? `"${quote.slice(0, 90)}${quote.length > 90 ? '...' : ''}" (${evaluations[badIdx]?.wordCount || 0} words)` : 'Experience bullets',
         fixable: true,
         fixType: 'trim-bullet-length',
         targetSection: 'experience',
@@ -405,11 +429,14 @@ export function computeGeneralAtsScore(
     const summaryHasPronouns = FIRST_PERSON_PRONOUN_REGEX.test(resume?.summary || '');
     if (pronounCount > 0 || summaryHasPronouns) {
       contentScore -= 3;
+      const pronounIdx = evaluations.findIndex((e) => e.hasPronouns);
+      const quote = pronounIdx >= 0 ? allBullets[pronounIdx] : resume?.summary || '';
       deductions.push({
         id: 'ded-content-pronouns',
         category: 'contentQuality',
         pointsLost: 3,
         reason: 'First-person pronouns (I, my, we, our) detected. Resumes should use implied third-person voice.',
+        evidence: quote ? `"${quote.slice(0, 90)}${quote.length > 90 ? '...' : ''}"` : 'Summary / Experience',
         fixable: true,
         fixType: 'remove-pronouns',
         targetSection: 'experience',
@@ -422,11 +449,14 @@ export function computeGeneralAtsScore(
     const fillerBullets = evaluations.filter((e) => e.hasFillerWords);
     if (fillerBullets.length > 0) {
       contentScore -= 2;
+      const fillerIdx = evaluations.findIndex((e) => e.hasFillerWords);
+      const quote = fillerIdx >= 0 ? allBullets[fillerIdx] : '';
       deductions.push({
         id: 'ded-content-filler',
         category: 'contentQuality',
         pointsLost: 2,
         reason: `Weak filler phrases detected ("${fillerBullets[0].fillerMatched}"). Replace with direct action statements.`,
+        evidence: quote ? `"${quote.slice(0, 90)}${quote.length > 90 ? '...' : ''}"` : 'Experience bullets',
         fixable: true,
         fixType: 'remove-filler-words',
         targetSection: 'experience',
@@ -464,6 +494,7 @@ export function computeGeneralAtsScore(
       category: 'completeness',
       pointsLost: 2.5,
       reason: 'Missing valid email address in Contact details.',
+      evidence: 'Section: Contact Header (email field is empty)',
       fixable: false,
       targetSection: 'contact',
     });
@@ -475,6 +506,7 @@ export function computeGeneralAtsScore(
       category: 'completeness',
       pointsLost: 2.5,
       reason: 'Missing phone number in Contact details.',
+      evidence: 'Section: Contact Header (phone field is empty)',
       fixable: true,
       fixType: 'fill-phone-location',
       targetSection: 'contact',
@@ -487,6 +519,7 @@ export function computeGeneralAtsScore(
       category: 'completeness',
       pointsLost: 2,
       reason: 'Missing city/location in Contact details.',
+      evidence: 'Section: Contact Header (location field is empty)',
       fixable: true,
       fixType: 'fill-phone-location',
       targetSection: 'contact',
@@ -499,6 +532,7 @@ export function computeGeneralAtsScore(
       category: 'completeness',
       pointsLost: 2,
       reason: 'Missing LinkedIn profile URL in Contact details.',
+      evidence: 'Section: Contact Header (linkedin field is empty)',
       fixable: true,
       fixType: 'fill-linkedin',
       targetSection: 'contact',
@@ -511,6 +545,7 @@ export function computeGeneralAtsScore(
       category: 'completeness',
       pointsLost: 3,
       reason: 'Professional summary is missing or under 50 characters.',
+      evidence: resume?.summary ? `Summary length: ${resume.summary.trim().length} chars` : 'Section: Summary (empty)',
       fixable: true,
       fixType: 'fill-summary',
       targetSection: 'summary',
@@ -523,6 +558,7 @@ export function computeGeneralAtsScore(
       category: 'completeness',
       pointsLost: 3,
       reason: `Only ${allSkills.length} skill(s) listed. Add at least 6 technical/domain skills.`,
+      evidence: `Section: Skills (${allSkills.length} found: ${allSkills.join(', ') || 'none'})`,
       fixable: false,
       targetSection: 'skills',
     });
@@ -534,6 +570,7 @@ export function computeGeneralAtsScore(
       category: 'completeness',
       pointsLost: 3,
       reason: 'Missing work experience or internship entries.',
+      evidence: 'Section: Experience (0 roles captured)',
       fixable: false,
       targetSection: 'experience',
     });
@@ -545,6 +582,7 @@ export function computeGeneralAtsScore(
       category: 'completeness',
       pointsLost: 2,
       reason: 'Missing education history entry.',
+      evidence: 'Section: Education (0 degrees captured)',
       fixable: false,
       targetSection: 'education',
     });
@@ -569,18 +607,21 @@ export function computeGeneralAtsScore(
   const passedCount = checklist.filter((c) => c.passed).length;
   const completenessPercent = Math.round((passedCount / checklist.length) * 100);
 
-  const totalScore = Math.max(
-    0,
-    Math.min(100, parsabilityScore + structureScore + contentScore + completenessScore)
-  );
+  const totalScore = cannotScoreReason
+    ? 0
+    : Math.max(
+        0,
+        Math.min(100, parsabilityScore + structureScore + contentScore + completenessScore)
+      );
 
   // Sort deductions by highest points lost first
   deductions.sort((a, b) => b.pointsLost - a.pointsLost);
 
   return {
     totalScore,
+    cannotScoreReason,
     disclaimer:
-      'Estimated ATS compatibility score based on common enterprise ATS parsing rules — not an official vendor score.',
+      'Estimated ATS Score (based on common ATS parsing rules) — not an official vendor score.',
     categories: {
       parsability: { earned: parsabilityScore, max: 35, details: parsabilityDetails },
       structure: { earned: structureScore, max: 20, details: structureDetails },

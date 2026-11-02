@@ -95,6 +95,7 @@ export const DashboardShell: React.FC<DashboardShellProps> = ({
     sidebarRef,
     isPinned,
     isExpanded,
+    togglePin,
     mobileDrawerOpen,
     setMobileDrawerOpen,
     prefersReducedMotion,
@@ -148,6 +149,7 @@ export const DashboardShell: React.FC<DashboardShellProps> = ({
         sidebarRef={sidebarRef}
         isPinned={isPinned}
         isExpanded={isExpanded}
+        onTogglePin={togglePin}
         prefersReducedMotion={prefersReducedMotion}
         mobileDrawerOpen={mobileDrawerOpen}
         onCloseMobileDrawer={() => setMobileDrawerOpen(false)}
@@ -160,8 +162,8 @@ export const DashboardShell: React.FC<DashboardShellProps> = ({
         className={`flex-1 flex flex-col h-[100dvh] max-h-[100dvh] min-w-0 bg-white overflow-hidden ${
           prefersReducedMotion
             ? 'transition-none duration-0'
-            : 'transition-[padding-left] duration-250 ease-in-out'
-        } ${isPinned ? 'lg:pl-[272px]' : 'lg:pl-[72px]'}`}
+            : 'transition-[padding-left] duration-200 ease-out'
+        } ${isPinned ? 'lg:pl-[260px]' : 'lg:pl-[72px]'}`}
       >
         {activeBanner && (
           <div className="shrink-0 bg-slate-900 text-white px-4 py-2 text-xs flex items-center justify-between gap-3 border-b border-slate-800">

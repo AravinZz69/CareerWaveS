@@ -1,5 +1,10 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import {
+  supabase,
+  isSupabaseConfigured,
+  SUPABASE_URL,
+  formatBackendError,
+} from '../lib/supabase';
 import { apiFetch as fetch } from '../lib/staticServerlessFallback';
 
 export type AppRole = 'admin' | 'user';
@@ -334,6 +339,112 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     async (overrideUser?: { id: string; email: string } | null, overrideToken?: string | null) => {
       const targetUser = overrideUser !== undefined ? overrideUser : user;
       try {
+        if (isSupabaseConfigured && supabase) {
+          const { data: supaPlans } = await supabase
+            .from('plans')
+            .select('*')
+            .eq('is_active', true)
+            .order('price_monthly', { ascending: true });
+          if (Array.isArray(supaPlans) && supaPlans.length > 0) {
+            setPlans(supaPlans as SaaSPlan[]);
+          }
+
+          if (targetUser?.id) {
+            const [profileRes, onboardingRes, subRes, usageRes, invRes, annRes] = await Promise.all([
+              supabase.from('profiles').select('*').eq('id', targetUser.id).maybeSingle(),
+              supabase
+                .from('user_onboarding')
+                .select('*')
+                .eq('user_id', targetUser.id)
+                .maybeSingle(),
+              supabase
+                .from('subscriptions')
+                .select('*')
+                .eq('user_id', targetUser.id)
+                .eq('status', 'active')
+                .order('created_at', { ascending: false })
+                .limit(1)
+                .maybeSingle(),
+              supabase.from('usage_events').select('*').eq('user_id', targetUser.id),
+              supabase
+                .from('invoices')
+                .select('*')
+                .eq('user_id', targetUser.id)
+                .order('created_at', { ascending: false }),
+              supabase.from('announcements').select('*').eq('is_active', true),
+            ]);
+
+            if (profileRes.data) {
+              const p = profileRes.data;
+              const ob = onboardingRes.data;
+              const activePlanName: PlanName =
+                (subRes.data?.plan_name as PlanName) || (p.plan as PlanName) || 'Free';
+              setPlan(activePlanName);
+              setRole((p.role as AppRole) || 'user');
+              setProfile((prev) => ({
+                id: p.id,
+                email: p.email || targetUser.email,
+                full_name: p.full_name || prev?.full_name || 'Member',
+                avatar_url: p.avatar_url || prev?.avatar_url || '',
+                role: (p.role as AppRole) || prev?.role || 'user',
+                title: ob?.current_role || p.title || prev?.title || '',
+                target_role: ob?.target_role || p.target_role || prev?.target_role || '',
+                location: ob?.location || p.location || prev?.location || 'India',
+                experience_level:
+                  ob?.experience_level || p.experience_level || prev?.experience_level || '',
+                career_track: ob?.career_track || p.career_track || prev?.career_track || '',
+                education_or_company:
+                  ob?.university || p.education_or_company || prev?.education_or_company || '',
+                work_preference:
+                  ob?.work_mode || p.work_preference || prev?.work_preference || '',
+                career_goal: ob?.career_goal || p.career_goal || prev?.career_goal || '',
+                skills: Array.isArray(ob?.key_skills)
+                  ? ob.key_skills
+                  : Array.isArray(p.skills)
+                  ? p.skills
+                  : prev?.skills || [],
+                bio: p.bio ?? prev?.bio ?? '',
+                onboarding_completed: Boolean(
+                  ob?.completed ?? p.onboarding_completed ?? prev?.onboarding_completed
+                ),
+                plan: activePlanName,
+              }));
+
+              const matchedPlan =
+                (supaPlans || []).find((pl: any) => pl.name === activePlanName) || null;
+              const limits = matchedPlan?.feature_limits || {
+                resume_tailoring: 2,
+                ai_job_match: 5,
+                mock_interview: 2,
+                linkedin_generation: 1,
+                portfolio_generation: 1,
+              };
+              const usageRows = Array.isArray(usageRes.data) ? usageRes.data : [];
+              const nextMeters = { ...defaultMeters };
+              for (const feat of Object.keys(defaultMeters) as UsageFeature[]) {
+                const usedCount = usageRows.filter((u: any) => u.feature === feat).length;
+                const baseLim = Number(limits[feat] ?? defaultMeters[feat].baseLimit);
+                const bonus = Number(p.bonus_credits?.[feat] || 0);
+                const totalLim = baseLim + bonus;
+                const pct = totalLim > 0 ? Math.min(100, Math.round((usedCount / totalLim) * 100)) : 0;
+                nextMeters[feat] = {
+                  used: usedCount,
+                  baseLimit: baseLim,
+                  bonusCredits: bonus,
+                  totalLimit: totalLim,
+                  percent: pct,
+                  nearLimit: pct >= 80 && usedCount < totalLim,
+                  exceeded: usedCount >= totalLim,
+                };
+              }
+              setMeters(nextMeters);
+            }
+            if (Array.isArray(invRes.data)) setInvoices(invRes.data);
+            if (Array.isArray(annRes.data)) setAnnouncements(annRes.data);
+            return;
+          }
+        }
+
         const res = await fetch('/api/saas/status', {
           headers: getAuthHeaders(targetUser, overrideToken),
         });
@@ -590,7 +701,153 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const registerWithPassword = async (payload: RegisterWithOnboardingPayload) => {
+    const cleanEmail = payload.email.trim().toLowerCase();
+    const cleanName = payload.full_name.trim() || 'CareerWave Member';
+    const isAdminEmail =
+      cleanEmail === 'admin@careerwave.in' ||
+      cleanEmail === 'admin@careerwave.io' ||
+      cleanEmail === 'superadmin@careerwave.in' ||
+      cleanEmail === 'poornachandu834@gmail.com';
+
     try {
+      if (isSupabaseConfigured && supabase) {
+        const signUpUrl = `${SUPABASE_URL}/auth/v1/signup`;
+        const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+          email: cleanEmail,
+          password: payload.password,
+          options: {
+            data: {
+              full_name: cleanName,
+              title: payload.title || '',
+              target_role: payload.target_role || '',
+              experience_level: payload.experience_level || '',
+              career_track: payload.career_track || '',
+              education_or_company: payload.education_or_company || '',
+              location: payload.location || 'India',
+              work_preference: payload.work_preference || 'Hybrid',
+              career_goal: payload.career_goal || '',
+              skills: payload.skills || [],
+              onboarding_completed: true,
+            },
+          },
+        });
+
+        if (signUpError) {
+          const formatted = formatBackendError(signUpError, signUpUrl);
+          return { error: formatted.userMessage };
+        }
+
+        let activeSession = signUpData.session;
+        let activeSupaUser = signUpData.user;
+
+        // Sign in immediately with no OTP or email verification wait if session wasn't returned directly
+        if (!activeSession && activeSupaUser) {
+          const { data: signInData, error: signInErr } = await supabase.auth.signInWithPassword({
+            email: cleanEmail,
+            password: payload.password,
+          });
+          if (!signInErr && signInData.session) {
+            activeSession = signInData.session;
+            activeSupaUser = signInData.user;
+          }
+        }
+
+        if (activeSupaUser) {
+          const userId = activeSupaUser.id;
+          const userRole: AppRole = isAdminEmail ? 'admin' : 'user';
+          const userPlan: PlanName = isAdminEmail ? 'Premium' : 'Free';
+          const avatarUrl = `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(
+            cleanName
+          )}`;
+
+          // Save career onboarding answers to profiles and user_onboarding with RLS
+          await Promise.allSettled([
+            supabase.from('profiles').upsert({
+              id: userId,
+              email: cleanEmail,
+              full_name: cleanName,
+              avatar_url: avatarUrl,
+              role: userRole,
+              plan: userPlan,
+              title: payload.title || '',
+              target_role: payload.target_role || '',
+              experience_level: payload.experience_level || '',
+              career_track: payload.career_track || '',
+              education_or_company: payload.education_or_company || '',
+              location: payload.location || 'India',
+              work_preference: payload.work_preference || 'Hybrid',
+              career_goal: payload.career_goal || '',
+              skills: payload.skills || [],
+              bio: payload.bio || '',
+              onboarding_completed: true,
+              updated_at: new Date().toISOString(),
+            }),
+            supabase.from('user_onboarding').upsert(
+              {
+                user_id: userId,
+                current_role: payload.title || '',
+                target_role: payload.target_role || '',
+                experience_level: payload.experience_level || '',
+                career_track: payload.career_track || '',
+                university: payload.education_or_company || '',
+                location: payload.location || 'India',
+                work_mode: payload.work_preference || 'Hybrid',
+                career_goal: payload.career_goal || '',
+                key_skills: payload.skills || [],
+                completed: true,
+                updated_at: new Date().toISOString(),
+              },
+              { onConflict: 'user_id' }
+            ),
+          ]);
+
+          const nextUser = { id: userId, email: cleanEmail };
+          const nextProfile: UserProfile = {
+            id: userId,
+            email: cleanEmail,
+            full_name: cleanName,
+            avatar_url: avatarUrl,
+            role: userRole,
+            title: payload.title || '',
+            target_role: payload.target_role || '',
+            location: payload.location || 'India',
+            experience_level: payload.experience_level || '',
+            career_track: payload.career_track || '',
+            education_or_company: payload.education_or_company || '',
+            work_preference: payload.work_preference || 'Hybrid',
+            career_goal: payload.career_goal || '',
+            skills: payload.skills || [],
+            bio: payload.bio || '',
+            onboarding_completed: true,
+            plan: userPlan,
+          };
+
+          const token = activeSession?.access_token || `supa_${userId}`;
+          setUser(nextUser);
+          setProfile(nextProfile);
+          setRole(userRole);
+          setPlan(userPlan);
+          setSessionToken(token);
+
+          localStorage.setItem(
+            SESSION_STORAGE_KEY,
+            JSON.stringify({
+              user: nextUser,
+              profile: nextProfile,
+              sessionToken: token,
+            })
+          );
+
+          await Promise.all([
+            refreshSaaSStatus(nextUser, token),
+            refreshWorkspace(nextUser, token),
+          ]);
+
+          return { error: null, role: userRole };
+        }
+      }
+
+      // Local state fallback when running in offline/sandbox preview
       const res = await fetch('/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -598,8 +855,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
+        const formatted = formatBackendError(
+          { status: res.status, message: data.error || 'Registration failed' },
+          '/api/auth/register'
+        );
         return {
-          error: data.error || 'Unable to create your account. Please try again.',
+          error: formatted.userMessage,
         };
       }
 
@@ -645,22 +906,118 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       ]);
 
       return { error: null, role: nextProfile.role };
-    } catch {
-      return { error: 'Account creation failed due to a network error. Please try again.' };
+    } catch (err: any) {
+      const formatted = formatBackendError(err, `${SUPABASE_URL || 'local'}/auth/v1/signup`);
+      return { error: formatted.userMessage };
     }
   };
 
   const loginWithPassword = async (email: string, password: string) => {
+    const cleanEmail = email.trim().toLowerCase();
     try {
+      if (isSupabaseConfigured && supabase) {
+        const loginUrl = `${SUPABASE_URL}/auth/v1/token?grant_type=password`;
+        const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+          email: cleanEmail,
+          password,
+        });
+
+        if (signInError) {
+          const formatted = formatBackendError(signInError, loginUrl);
+          return { error: formatted.userMessage };
+        }
+
+        if (signInData.user) {
+          const userId = signInData.user.id;
+          const meta = signInData.user.user_metadata || {};
+          const [profRes, obRes] = await Promise.all([
+            supabase.from('profiles').select('*').eq('id', userId).maybeSingle(),
+            supabase.from('user_onboarding').select('*').eq('user_id', userId).maybeSingle(),
+          ]);
+
+          const p = profRes.data || {};
+          const ob = obRes.data || {};
+          const isAdminEmail =
+            cleanEmail === 'admin@careerwave.in' ||
+            cleanEmail === 'admin@careerwave.io' ||
+            cleanEmail === 'superadmin@careerwave.in' ||
+            cleanEmail === 'poornachandu834@gmail.com';
+          const userRole: AppRole = isAdminEmail ? 'admin' : (p.role as AppRole) || 'user';
+          const userPlan: PlanName = (p.plan as PlanName) || (isAdminEmail ? 'Premium' : 'Free');
+
+          const nextUser = { id: userId, email: cleanEmail };
+          const nextProfile: UserProfile = {
+            id: userId,
+            email: cleanEmail,
+            full_name: p.full_name || meta.full_name || cleanEmail.split('@')[0],
+            avatar_url:
+              p.avatar_url ||
+              `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(
+                p.full_name || meta.full_name || cleanEmail
+              )}`,
+            role: userRole,
+            title: ob.current_role || p.title || meta.title || '',
+            target_role: ob.target_role || p.target_role || meta.target_role || '',
+            location: ob.location || p.location || meta.location || 'India',
+            experience_level:
+              ob.experience_level || p.experience_level || meta.experience_level || '',
+            career_track: ob.career_track || p.career_track || meta.career_track || '',
+            education_or_company:
+              ob.university || p.education_or_company || meta.education_or_company || '',
+            work_preference: ob.work_mode || p.work_preference || meta.work_preference || 'Hybrid',
+            career_goal: ob.career_goal || p.career_goal || meta.career_goal || '',
+            skills: Array.isArray(ob.key_skills)
+              ? ob.key_skills
+              : Array.isArray(p.skills)
+              ? p.skills
+              : Array.isArray(meta.skills)
+              ? meta.skills
+              : [],
+            bio: p.bio || '',
+            onboarding_completed: Boolean(
+              ob.completed ?? p.onboarding_completed ?? meta.onboarding_completed ?? true
+            ),
+            plan: userPlan,
+          };
+
+          const token = signInData.session?.access_token || `supa_${userId}`;
+          setUser(nextUser);
+          setProfile(nextProfile);
+          setRole(userRole);
+          setPlan(userPlan);
+          setSessionToken(token);
+
+          localStorage.setItem(
+            SESSION_STORAGE_KEY,
+            JSON.stringify({
+              user: nextUser,
+              profile: nextProfile,
+              sessionToken: token,
+            })
+          );
+
+          await Promise.all([
+            refreshSaaSStatus(nextUser, token),
+            refreshWorkspace(nextUser, token),
+          ]);
+
+          return { error: null, role: userRole };
+        }
+      }
+
       const res = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: email.trim().toLowerCase(), password }),
+        body: JSON.stringify({ email: cleanEmail, password }),
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
+        const formatted = formatBackendError(
+          { status: res.status, code: data.code, message: data.error || 'Invalid email or password' },
+          '/api/auth/login'
+        );
         return {
-          error: data.error || 'Invalid email or password.',
+          error: formatted.userMessage,
         };
       }
 
@@ -706,8 +1063,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       ]);
 
       return { error: null, role: nextProfile.role };
-    } catch {
-      return { error: 'Sign in failed due to a network error. Please try again.' };
+    } catch (err: any) {
+      const formatted = formatBackendError(
+        err,
+        `${SUPABASE_URL || 'local'}/auth/v1/token?grant_type=password`
+      );
+      return { error: formatted.userMessage };
     }
   };
 
@@ -788,6 +1149,50 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     if (!user) return;
+
+    if (isSupabaseConfigured && supabase) {
+      try {
+        await Promise.allSettled([
+          supabase.from('profiles').upsert({
+            id: user.id,
+            email: user.email,
+            full_name: optimisticProfile.full_name,
+            avatar_url: optimisticProfile.avatar_url,
+            title: optimisticProfile.title || '',
+            target_role: optimisticProfile.target_role || '',
+            location: optimisticProfile.location || 'India',
+            experience_level: optimisticProfile.experience_level || '',
+            career_track: optimisticProfile.career_track || '',
+            education_or_company: optimisticProfile.education_or_company || '',
+            work_preference: optimisticProfile.work_preference || 'Hybrid',
+            career_goal: optimisticProfile.career_goal || '',
+            skills: optimisticProfile.skills || [],
+            bio: optimisticProfile.bio || '',
+            onboarding_completed: Boolean(optimisticProfile.onboarding_completed),
+            updated_at: new Date().toISOString(),
+          }),
+          supabase.from('user_onboarding').upsert(
+            {
+              user_id: user.id,
+              current_role: optimisticProfile.title || '',
+              target_role: optimisticProfile.target_role || '',
+              experience_level: optimisticProfile.experience_level || '',
+              career_track: optimisticProfile.career_track || '',
+              university: optimisticProfile.education_or_company || '',
+              location: optimisticProfile.location || 'India',
+              work_mode: optimisticProfile.work_preference || 'Hybrid',
+              career_goal: optimisticProfile.career_goal || '',
+              key_skills: optimisticProfile.skills || [],
+              completed: Boolean(optimisticProfile.onboarding_completed),
+              updated_at: new Date().toISOString(),
+            },
+            { onConflict: 'user_id' }
+          ),
+        ]);
+      } catch {
+        // non-fatal
+      }
+    }
 
     try {
       const res = await fetch('/api/user/profile', {

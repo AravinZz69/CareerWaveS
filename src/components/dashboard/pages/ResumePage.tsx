@@ -55,6 +55,14 @@ import {
   validateRewriteTruthfulness,
 } from '../../../lib/atsScoringEngine';
 import { resolveCanonicalSkill } from '../../../lib/skillsTaxonomy';
+import {
+  extractResumeDocumentInBrowser,
+  type DocumentExtractionMetadata,
+} from '../../../lib/resumeDocumentExtractor';
+import {
+  parseAndScoreResumeHighRecall,
+  type ParseCaptureSummary,
+} from '../../../lib/resumeHighRecallParser';
 import { useAuth, getGlobalJobsCache } from '../../../context/AuthContext';
 import { OpenRouterConfigModal } from '../../common/OpenRouterConfigModal';
 import confetti from 'canvas-confetti';
@@ -269,6 +277,10 @@ export const ResumePage: React.FC<ResumePageProps> = ({
     atsScore: number;
     fileName?: string;
   } | null>(null);
+  const [captureSummary, setCaptureSummary] = useState<ParseCaptureSummary | null>(null);
+  const [extractionMeta, setExtractionMeta] = useState<DocumentExtractionMetadata | null>(null);
+  const [parseErrorBanner, setParseErrorBanner] = useState<string | null>(null);
+  const [showSideBySideRaw, setShowSideBySideRaw] = useState<boolean>(true);
   const abortControllerRef = useRef<AbortController | null>(null);
   const lastActionRef = useRef<(() => void) | null>(null);
 
@@ -380,13 +392,14 @@ export const ResumePage: React.FC<ResumePageProps> = ({
     }, 850);
   };
 
-  // Parse Resume via Server with temperature 0, strict JSON schema, taxonomy normalization & deterministic scoring
+  // High-Recall Section-by-Section Resume Parser & Deterministic ATS Scorer (Zero Fake Data)
   const parseResumeWithServer = async (payload: {
     rawText?: string;
     fileBase64?: string;
     fileName?: string;
     mimeType?: string;
     fileSize?: string;
+    metadata?: DocumentExtractionMetadata;
     alreadyOpenedOverlay?: boolean;
   }) => {
     lastActionRef.current = () => {
@@ -399,6 +412,7 @@ export const ResumePage: React.FC<ResumePageProps> = ({
     const controller = new AbortController();
     abortControllerRef.current = controller;
 
+    setParseErrorBanner(null);
     setIsParsing(true);
     if (!payload.alreadyOpenedOverlay) {
       setOverlayMode('parse');
@@ -413,97 +427,81 @@ export const ResumePage: React.FC<ResumePageProps> = ({
     }
 
     try {
-      const progressTimer = window.setTimeout(() => {
-        setOverlayMilestone(68);
-      }, 450);
-
-      const res = await fetch('/api/resume/parse', {
-        method: 'POST',
-        headers: getAuthHeaders(),
-        signal: controller.signal,
-        body: JSON.stringify({
-          ...payload,
-          candidateName:
-            profile?.full_name &&
-            profile.full_name !== 'Member' &&
-            profile.full_name !== 'Guest Visitor'
-              ? profile.full_name
-              : undefined,
-          candidateEmail: user?.email || profile?.email,
-        }),
-      });
-
-      window.clearTimeout(progressTimer);
-      setOverlayMilestone(86);
-
-      const json = await res.json();
-      if (!res.ok || json.error) {
-        setOverlayError(
-          json.error ||
-            'Unable to parse this file. It may be an unreadable scanned PDF or an AI provider error.'
-        );
+      const cleanRawText = (payload.rawText || '').trim();
+      if (cleanRawText.length < 30) {
+        const msg =
+          'Extracted resume text is empty or under 30 characters. Please upload a readable PDF, DOCX, or TXT file and click Retry.';
+        setOverlayError(msg);
+        setParseErrorBanner(msg);
         return;
       }
 
-      if (json.success && json.data) {
-        isLocalEditRef.current = false;
-        const extractedStr = json.rawExtractedText || payload.rawText || '';
-        const normalized = normalizeCanonicalResume(json.data, extractedStr);
-        normalized.uploadedFileName = payload.fileName || normalized.uploadedFileName || 'Uploaded_Resume.pdf';
-        normalized.uploadedFileSize = payload.fileSize || normalized.uploadedFileSize || '185 KB';
-        normalized.uploadedAt = new Date().toISOString();
-        normalized.rawTextPreview = extractedStr || normalized.rawTextPreview;
+      const parsed = await parseAndScoreResumeHighRecall({
+        rawText: cleanRawText,
+        metadata: payload.metadata,
+        onStageUpdate: (_stage, pct) => {
+          setOverlayMilestone(pct);
+        },
+      });
 
-        const detectedList = extractSkillsFromTextOrResume(extractedStr, normalized.skills);
-        setOverlaySkills(detectedList);
-        setResumeData(normalized);
-        if (normalized.rawTextPreview) {
-          setRawExtractedText(normalized.rawTextPreview);
-        }
-        await saveUserResume(normalized);
+      isLocalEditRef.current = false;
+      const normalized = parsed.structuredResume;
+      normalized.uploadedFileName =
+        payload.fileName || normalized.uploadedFileName || 'Uploaded_Resume.pdf';
+      normalized.uploadedFileSize =
+        payload.fileSize || normalized.uploadedFileSize || '185 KB';
+      normalized.uploadedAt = new Date().toISOString();
+      normalized.rawTextPreview = cleanRawText;
 
-        if (json.inferredProfile) {
-          const inf = json.inferredProfile;
-          await updateUserProfile({
-            full_name: inf.full_name || normalized.contact.fullName || profile?.full_name,
-            title: inf.title || profile?.title || 'Software & AI Engineer',
-            target_role: inf.target_role || profile?.target_role || inf.title,
-            location: inf.location || normalized.contact.location || profile?.location || 'India',
-            experience_level: inf.experience_level || profile?.experience_level,
-            career_track: inf.career_track || profile?.career_track,
-            education_or_company: inf.education_or_company || profile?.education_or_company,
-            skills:
-              Array.isArray(inf.skills) && inf.skills.length > 0
-                ? inf.skills
-                : profile?.skills || [],
-            bio: inf.bio || normalized.summary || profile?.bio,
-            onboarding_completed: true,
-          });
-        }
-
-        setPasteTextMode(false);
-        setActiveTab('preview');
-
-        const totalSkillsCount = countTotalSkills(normalized.skills);
-        setParsedConfirmation({
-          skillsCount: totalSkillsCount,
-          atsScore: normalized.atsScore || 90,
-          fileName: normalized.uploadedFileName,
-        });
-
-        setOverlayMilestone(100);
-        setOverlayFinished(true);
-      } else {
-        setOverlayError(
-          'Could not extract structured sections from the document. Please try another PDF, DOCX, or paste text directly.'
-        );
+      const detectedList = extractSkillsFromTextOrResume(cleanRawText, normalized.skills);
+      setOverlaySkills(detectedList);
+      setResumeData(normalized);
+      setRawExtractedText(cleanRawText);
+      setCaptureSummary(parsed.captureSummary);
+      if (payload.metadata) {
+        setExtractionMeta(payload.metadata);
       }
+
+      await saveUserResume(normalized);
+
+      if (parsed.inferredProfile) {
+        const inf = parsed.inferredProfile;
+        await updateUserProfile({
+          full_name: inf.full_name || normalized.contact.fullName || profile?.full_name,
+          title: inf.title || profile?.title || 'Software & AI Engineer',
+          target_role: inf.target_role || profile?.target_role || inf.title,
+          location: inf.location || normalized.contact.location || profile?.location || 'India',
+          experience_level: inf.experience_level || profile?.experience_level,
+          career_track: inf.career_track || profile?.career_track,
+          education_or_company: inf.education_or_company || profile?.education_or_company,
+          skills:
+            Array.isArray(inf.skills) && inf.skills.length > 0
+              ? inf.skills
+              : profile?.skills || [],
+          bio: inf.bio || normalized.summary || profile?.bio,
+          onboarding_completed: true,
+        });
+      }
+
+      setPasteTextMode(false);
+      setActiveTab('preview');
+
+      const totalSkillsCount = countTotalSkills(normalized.skills);
+      setParsedConfirmation({
+        skillsCount: totalSkillsCount,
+        atsScore: parsed.generalScore.totalScore,
+        fileName: normalized.uploadedFileName,
+      });
+
+      setOverlayMilestone(100);
+      setOverlayFinished(true);
     } catch (err: any) {
       if (err?.name === 'AbortError') return;
-      setOverlayError(
+      const msg =
         err?.message ||
-          'Failed to parse resume due to a connection or AI provider error. Click Try again to retry.'
-      );
+        'Failed to parse resume. Please click Retry or paste your resume text directly.';
+      setOverlayError(msg);
+      setParseErrorBanner(msg);
     } finally {
       setIsParsing(false);
     }
@@ -515,51 +513,41 @@ export const ResumePage: React.FC<ResumePageProps> = ({
   };
 
   const processSelectedFile = async (file: File) => {
-    const ext = file.name.toLowerCase();
-    const isBinaryDoc =
-      ext.endsWith('.pdf') ||
-      ext.endsWith('.docx') ||
-      ext.endsWith('.doc') ||
-      file.type.includes('pdf') ||
-      file.type.includes('word') ||
-      file.type.includes('officedocument');
-
+    lastActionRef.current = () => {
+      processSelectedFile(file);
+    };
+    setParseErrorBanner(null);
     setOverlayMode('parse');
     setOverlayError(null);
     setOverlayFinished(false);
     setOverlayDocTitle(file.name);
     setOverlaySkills(extractSkillsFromTextOrResume('', resumeData?.skills));
-    setOverlayMilestone(14);
+    setOverlayMilestone(10);
     setOverlayOpen(true);
 
     try {
-      const fileBase64 = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result || ''));
-        reader.onerror = (err) => reject(err);
-        reader.readAsDataURL(file);
+      const extraction = await extractResumeDocumentInBrowser(file, (_msg, pct) => {
+        setOverlayMilestone(Math.min(35, Math.max(12, pct)));
       });
 
-      setOverlayMilestone(32);
-
-      let rawText = '';
-      if (!isBinaryDoc) {
-        rawText = await file.text();
-        setOverlaySkills(extractSkillsFromTextOrResume(rawText, resumeData?.skills));
-      }
+      setExtractionMeta(extraction.metadata);
+      setRawExtractedText(extraction.rawText);
+      setOverlaySkills(extractSkillsFromTextOrResume(extraction.rawText, resumeData?.skills));
 
       await parseResumeWithServer({
-        rawText,
-        fileBase64,
+        rawText: extraction.rawText,
         fileName: file.name,
         mimeType: file.type || 'application/octet-stream',
         fileSize: formatFileSize(file.size),
+        metadata: extraction.metadata,
         alreadyOpenedOverlay: true,
       });
-    } catch {
-      setOverlayError(
-        'Could not read the selected file from disk. Please select another PDF, DOCX, or TXT file.'
-      );
+    } catch (err: any) {
+      const msg =
+        err?.message ||
+        'Could not extract text from the selected file. Please verify it is a valid PDF, DOCX, or TXT file and click Retry.';
+      setOverlayError(msg);
+      setParseErrorBanner(msg);
     }
   };
 
@@ -1258,32 +1246,101 @@ export const ResumePage: React.FC<ResumePageProps> = ({
         </div>
       </div>
 
-      {/* Short "Resume parsed" Confirmation Banner */}
-      {parsedConfirmation && resumeData && (
-        <div className="bg-[#F4F0FF] border border-[#6C3CE1]/25 px-4 py-3 rounded-2xl flex flex-wrap items-center justify-between gap-3 animate-in fade-in duration-300">
-          <div className="flex items-center gap-2.5">
-            <span className="inline-flex h-7 w-7 items-center justify-center rounded-xl bg-[#6C3CE1] text-white shrink-0">
-              <CheckCircle2 className="h-4 w-4" />
-            </span>
-            <div className="text-xs sm:text-sm">
-              <strong className="font-bold text-slate-900">Resume parsed</strong>
-              <span className="mx-2 text-slate-400">·</span>
-              <span className="font-semibold text-[#6C3CE1]">
-                {parsedConfirmation.skillsCount} canonical skills found
-              </span>
-              <span className="mx-2 text-slate-400 hidden sm:inline">·</span>
-              <span className="text-slate-600 hidden sm:inline">
-                Deterministic ATS Score: <strong>{generalBreakdown?.totalScore}/100</strong>
-              </span>
-            </div>
+      {/* Clear Error Banner with Retry Button if Parsing Fails */}
+      {parseErrorBanner && (
+        <div className="bg-rose-50 border border-rose-200 px-4 py-3.5 rounded-2xl flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5 text-xs sm:text-sm text-rose-800">
+            <AlertCircle className="h-4 w-4 text-rose-600 shrink-0" />
+            <span>{parseErrorBanner}</span>
           </div>
-          <button
-            type="button"
-            onClick={() => setParsedConfirmation(null)}
-            className="text-xs font-semibold text-slate-500 hover:text-slate-800 cursor-pointer"
-          >
-            Dismiss
-          </button>
+          <div className="flex items-center gap-2">
+            {lastActionRef.current && (
+              <button
+                type="button"
+                onClick={() => {
+                  setParseErrorBanner(null);
+                  lastActionRef.current?.();
+                }}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white px-3 py-1.5 text-xs font-bold cursor-pointer"
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+                <span>Retry</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setParseErrorBanner(null)}
+              className="text-xs font-semibold text-rose-600 hover:text-rose-900 cursor-pointer"
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Captured Counts Summary Bar & Extraction Stats */}
+      {resumeData && (
+        <div className="bg-[#F4F0FF] border border-[#6C3CE1]/25 px-4 py-3 rounded-2xl flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="inline-flex items-center gap-1.5 font-bold text-[#6C3CE1]">
+              <CheckCircle2 className="h-4 w-4 shrink-0" />
+              Captured:
+            </span>
+            <span className="font-semibold text-slate-800">
+              Experience: {resumeData.experience?.length || 0} roles,{' '}
+              {(resumeData.experience || []).reduce(
+                (acc, r) => acc + (r.bullets?.length || 0),
+                0
+              )}{' '}
+              bullets
+            </span>
+            <span className="text-slate-300">·</span>
+            <span className="font-semibold text-slate-800">
+              Projects: {resumeData.projects?.length || 0}
+            </span>
+            <span className="text-slate-300">·</span>
+            <span className="font-semibold text-slate-800">
+              Skills: {countTotalSkills(resumeData.skills)}
+            </span>
+            <span className="text-slate-300">·</span>
+            <span className="font-semibold text-slate-800">
+              Education: {resumeData.education?.length || 0}
+            </span>
+            <span className="text-slate-300">·</span>
+            <span className="font-semibold text-slate-800">
+              Certifications: {resumeData.certifications?.length || 0}
+            </span>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-600">
+            {(extractionMeta || rawExtractedText) && (
+              <span>
+                Extracted:{' '}
+                <strong>
+                  {(
+                    extractionMeta?.charCount ||
+                    rawExtractedText.length ||
+                    0
+                  ).toLocaleString()}
+                </strong>{' '}
+                chars ·{' '}
+                <strong>
+                  {(
+                    extractionMeta?.wordCount ||
+                    rawExtractedText.split(/\s+/).filter(Boolean).length ||
+                    0
+                  ).toLocaleString()}
+                </strong>{' '}
+                words
+                {extractionMeta?.pageCount ? ` · ${extractionMeta.pageCount} page(s)` : ''}
+              </span>
+            )}
+            {(extractionMeta?.usedOcr || captureSummary?.usedOcr) && (
+              <span className="rounded-lg bg-amber-100 border border-amber-300 px-2 py-0.5 font-bold text-amber-900">
+                Scanned PDF · OCR Applied
+              </span>
+            )}
+          </div>
         </div>
       )}
 
@@ -1462,11 +1519,15 @@ export const ResumePage: React.FC<ResumePageProps> = ({
             {generalBreakdown && (
               <div className="flex items-center gap-2 pr-2 text-xs">
                 <span className="text-slate-500 font-medium hidden sm:inline">
-                  Estimated ATS Score:
+                  Estimated ATS Score (based on common ATS parsing rules):
                 </span>
-                <span className="font-black text-emerald-700">
-                  {generalBreakdown.totalScore}/100
-                </span>
+                {generalBreakdown.cannotScoreReason ? (
+                  <span className="font-bold text-rose-600">Cannot score yet</span>
+                ) : (
+                  <span className="font-black text-emerald-700">
+                    {generalBreakdown.totalScore}/100
+                  </span>
+                )}
               </div>
             )}
           </div>
@@ -1481,9 +1542,13 @@ export const ResumePage: React.FC<ResumePageProps> = ({
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-100">
                   <div>
                     <h3 className="font-serif text-base sm:text-lg font-bold text-slate-900">
-                      Transparent ATS Compatibility Breakdown ({generalBreakdown.totalScore}/100)
+                      {generalBreakdown.cannotScoreReason
+                        ? 'Cannot Score Yet — Incomplete or Unparsed Resume'
+                        : `Estimated ATS Score (based on common ATS parsing rules): ${generalBreakdown.totalScore}/100`}
                     </h3>
-                    <p className="text-xs text-slate-500">{generalBreakdown.disclaimer}</p>
+                    <p className="text-xs text-slate-500">
+                      {generalBreakdown.cannotScoreReason || generalBreakdown.disclaimer}
+                    </p>
                   </div>
                   <span className="text-xs font-semibold text-slate-600">
                     Completeness: <strong>{generalBreakdown.completenessPercent}%</strong>
@@ -1536,23 +1601,30 @@ export const ResumePage: React.FC<ResumePageProps> = ({
                   ))}
                 </div>
 
-                {/* Deductions List with 1-Click Fix Buttons */}
+                {/* Deductions List with Evidence Quotes & 1-Click Fix Buttons */}
                 {generalBreakdown.deductions.length > 0 && (
                   <div className="space-y-2 pt-2">
                     <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block">
-                      Detected Deductions & 1-Click Fixes ({generalBreakdown.deductions.length})
+                      Detected Deductions, Evidence & 1-Click Fixes ({generalBreakdown.deductions.length})
                     </span>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
                       {generalBreakdown.deductions.map((ded) => (
                         <div
                           key={ded.id}
-                          className="rounded-xl border border-amber-200 bg-amber-50/40 px-3.5 py-2.5 flex items-center justify-between gap-3 text-xs"
+                          className="rounded-xl border border-amber-200 bg-amber-50/40 px-3.5 py-2.5 flex items-start justify-between gap-3 text-xs"
                         >
-                          <div>
-                            <span className="font-bold text-rose-600 mr-1.5">
-                              -{ded.pointsLost} pts:
-                            </span>
-                            <span className="text-slate-800">{ded.reason}</span>
+                          <div className="space-y-1">
+                            <div>
+                              <span className="font-bold text-rose-600 mr-1.5">
+                                -{ded.pointsLost} pts:
+                              </span>
+                              <span className="text-slate-800 font-medium">{ded.reason}</span>
+                            </div>
+                            {ded.evidence && (
+                              <div className="text-[11px] font-mono text-slate-500 bg-white/80 border border-amber-200/70 rounded-lg px-2 py-1">
+                                Evidence: {ded.evidence}
+                              </div>
+                            )}
                           </div>
                           {ded.fixable && (
                             <button
@@ -1635,15 +1707,82 @@ export const ResumePage: React.FC<ResumePageProps> = ({
           )}
 
           {/* ================================================================
-              TAB 2: COLORFUL INTERACTIVE STEPPER FORM + STICKY SCORE PANEL
+              TAB 2: INTERACTIVE STEPPER FORM + SIDE-BY-SIDE RAW TEXT VIEW
           ================================================================ */}
           {activeTab === 'edit' && (
-            <ResumeEditorForm
-              resumeData={resumeData}
-              onChange={handleSaveEditedResume}
-              getAuthHeaders={getAuthHeaders}
-              onAutoFillFromProfile={handleSyncMissingFieldsFromProfile}
-            />
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-3 bg-white px-4 py-3 rounded-2xl border border-slate-200">
+                <div className="text-xs text-slate-600">
+                  <strong className="text-slate-900">Parsed Resume Editor:</strong> Every field, bullet, project, and skill is editable. Any change updates your ATS score and PDF/DOCX preview live.
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowSideBySideRaw((v) => !v)}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-slate-300 bg-slate-50 hover:bg-slate-100 px-3 py-1.5 text-xs font-bold text-slate-800 cursor-pointer"
+                >
+                  <FileText className="h-3.5 w-3.5 text-[#6C3CE1]" />
+                  <span>
+                    {showSideBySideRaw
+                      ? 'Hide Side-by-Side Raw Extracted Text'
+                      : 'Show Side-by-Side Raw Extracted Text'}
+                  </span>
+                </button>
+              </div>
+
+              <div
+                className={
+                  showSideBySideRaw
+                    ? 'grid grid-cols-1 xl:grid-cols-12 gap-5 items-start'
+                    : 'block'
+                }
+              >
+                <div className={showSideBySideRaw ? 'xl:col-span-8' : 'w-full'}>
+                  <ResumeEditorForm
+                    resumeData={resumeData}
+                    onChange={handleSaveEditedResume}
+                    getAuthHeaders={getAuthHeaders}
+                    onAutoFillFromProfile={handleSyncMissingFieldsFromProfile}
+                  />
+                </div>
+
+                {showSideBySideRaw && (
+                  <div className="xl:col-span-4 bg-white rounded-2xl border border-slate-200 p-4 shadow-2xs sticky top-4 space-y-3">
+                    <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
+                      <div>
+                        <h4 className="font-serif text-sm font-bold text-slate-900">
+                          Raw Extracted Resume Text
+                        </h4>
+                        <p className="text-[11px] text-slate-500">
+                          Compare side-by-side to verify 100% of your roles, projects & bullets were captured.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleCopyRawText}
+                        className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
+                      >
+                        {copiedRaw ? <Check className="h-3 w-3 text-emerald-600" /> : <Copy className="h-3 w-3" />}
+                        <span>{copiedRaw ? 'Copied' : 'Copy'}</span>
+                      </button>
+                    </div>
+                    <div className="max-h-[680px] overflow-y-auto rounded-xl bg-slate-50 border border-slate-200 p-3 font-mono text-[11px] text-slate-800 whitespace-pre-wrap leading-relaxed select-text">
+                      {rawExtractedText ||
+                        resumeData.rawTextPreview ||
+                        `${resumeData.contact.fullName}\n${resumeData.contact.email} | ${resumeData.contact.phone} | ${resumeData.contact.location}\n\nSUMMARY\n${resumeData.summary}\n\nEXPERIENCE\n${(
+                          resumeData.experience || []
+                        )
+                          .map(
+                            (e) =>
+                              `${e.role} | ${e.company} | ${e.duration}\n${(e.bullets || [])
+                                .map((b) => `- ${b}`)
+                                .join('\n')}`
+                          )
+                          .join('\n\n')}`}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
           )}
 
           {/* ================================================================

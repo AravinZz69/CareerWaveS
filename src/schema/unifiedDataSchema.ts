@@ -396,6 +396,7 @@ export interface AtsScoreDeduction {
   category: 'parsability' | 'structure' | 'contentQuality' | 'completeness';
   pointsLost: number;
   reason: string;
+  evidence?: string;
   fixable: boolean;
   fixType?:
     | 'remove-pronouns'
@@ -414,6 +415,7 @@ export interface AtsScoreDeduction {
 
 export interface GeneralAtsScoreBreakdown {
   totalScore: number;
+  cannotScoreReason?: string | null;
   disclaimer: string;
   categories: {
     parsability: { earned: number; max: 35; details: string[] };

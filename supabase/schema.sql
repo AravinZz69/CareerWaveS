@@ -98,19 +98,74 @@ CREATE TABLE IF NOT EXISTS public.profiles (
   title TEXT NOT NULL DEFAULT '',
   target_role TEXT NOT NULL DEFAULT '',
   years_of_exp INTEGER NOT NULL DEFAULT 0,
+  experience_level TEXT NOT NULL DEFAULT 'Early Career (1-3 yrs)',
+  career_track TEXT NOT NULL DEFAULT 'Generative AI',
+  education_or_company TEXT NOT NULL DEFAULT '',
   location TEXT NOT NULL DEFAULT 'India',
+  work_preference TEXT NOT NULL DEFAULT 'Hybrid',
+  career_goal TEXT NOT NULL DEFAULT 'Land a high-paying full-time role',
   bio TEXT NOT NULL DEFAULT '',
   skills TEXT[] NOT NULL DEFAULT '{}',
+  onboarding_completed BOOLEAN NOT NULL DEFAULT FALSE,
   status public.user_status NOT NULL DEFAULT 'active',
   plan public.plan_name NOT NULL DEFAULT 'Free',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Ensure columns exist if profiles table was created previously
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS experience_level TEXT NOT NULL DEFAULT 'Early Career (1-3 yrs)';
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS career_track TEXT NOT NULL DEFAULT 'Generative AI';
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS education_or_company TEXT NOT NULL DEFAULT '';
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS work_preference TEXT NOT NULL DEFAULT 'Hybrid';
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS career_goal TEXT NOT NULL DEFAULT 'Land a high-paying full-time role';
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS onboarding_completed BOOLEAN NOT NULL DEFAULT FALSE;
+
 DROP TRIGGER IF EXISTS trg_profiles_updated_at ON public.profiles;
 CREATE TRIGGER trg_profiles_updated_at
   BEFORE UPDATE ON public.profiles
   FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+-- 2.1b user_onboarding (Dedicated Career Onboarding table with per-user RLS)
+CREATE TABLE IF NOT EXISTS public.user_onboarding (
+  user_id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  full_name TEXT NOT NULL DEFAULT '',
+  current_role TEXT NOT NULL DEFAULT '',
+  target_role TEXT NOT NULL DEFAULT '',
+  experience_level TEXT NOT NULL DEFAULT 'Early Career (1-3 yrs)',
+  career_track TEXT NOT NULL DEFAULT 'Generative AI',
+  university_or_company TEXT NOT NULL DEFAULT '',
+  location TEXT NOT NULL DEFAULT 'India',
+  work_mode TEXT NOT NULL DEFAULT 'Hybrid',
+  career_goal TEXT NOT NULL DEFAULT 'Land a high-paying full-time role',
+  skills TEXT[] NOT NULL DEFAULT '{}',
+  bio TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+DROP TRIGGER IF EXISTS trg_user_onboarding_updated_at ON public.user_onboarding;
+CREATE TRIGGER trg_user_onboarding_updated_at
+  BEFORE UPDATE ON public.user_onboarding
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+ALTER TABLE public.user_onboarding ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "user_onboarding_select_own" ON public.user_onboarding;
+CREATE POLICY "user_onboarding_select_own"
+  ON public.user_onboarding FOR SELECT TO authenticated
+  USING (auth.uid() = user_id OR public.has_role(auth.uid(), 'admin'));
+
+DROP POLICY IF EXISTS "user_onboarding_insert_own" ON public.user_onboarding;
+CREATE POLICY "user_onboarding_insert_own"
+  ON public.user_onboarding FOR INSERT TO authenticated
+  WITH CHECK (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "user_onboarding_update_own" ON public.user_onboarding;
+CREATE POLICY "user_onboarding_update_own"
+  ON public.user_onboarding FOR UPDATE TO authenticated
+  USING (auth.uid() = user_id OR public.has_role(auth.uid(), 'admin'))
+  WITH CHECK (auth.uid() = user_id OR public.has_role(auth.uid(), 'admin'));
 
 -- 2.2 user_roles
 CREATE TABLE IF NOT EXISTS public.user_roles (
@@ -1023,31 +1078,111 @@ AS $$
 DECLARE
   v_free_plan_id UUID;
   v_display_name TEXT;
+  v_skills TEXT[];
 BEGIN
   v_display_name := COALESCE(
     NEW.raw_user_meta_data ->> 'full_name',
     initcap(replace(split_part(NEW.email, '@', 1), '.', ' '))
   );
 
-  -- 1. Create profile
-  INSERT INTO public.profiles (id, email, full_name, avatar_url, location, status, plan)
+  IF jsonb_typeof(NEW.raw_user_meta_data -> 'skills') = 'array' THEN
+    SELECT COALESCE(array_agg(elem), '{}')
+    INTO v_skills
+    FROM jsonb_array_elements_text(NEW.raw_user_meta_data -> 'skills') AS elem;
+  ELSE
+    v_skills := '{}';
+  END IF;
+
+  -- 1. Create profile with onboarding fields from user metadata
+  INSERT INTO public.profiles (
+    id,
+    email,
+    full_name,
+    avatar_url,
+    title,
+    target_role,
+    experience_level,
+    career_track,
+    education_or_company,
+    location,
+    work_preference,
+    career_goal,
+    skills,
+    bio,
+    onboarding_completed,
+    status,
+    plan
+  )
   VALUES (
     NEW.id,
     NEW.email,
     v_display_name,
     COALESCE(NEW.raw_user_meta_data ->> 'avatar_url', ''),
-    'India',
+    COALESCE(NEW.raw_user_meta_data ->> 'title', ''),
+    COALESCE(NEW.raw_user_meta_data ->> 'target_role', ''),
+    COALESCE(NEW.raw_user_meta_data ->> 'experience_level', 'Early Career (1-3 yrs)'),
+    COALESCE(NEW.raw_user_meta_data ->> 'career_track', 'Generative AI'),
+    COALESCE(NEW.raw_user_meta_data ->> 'education_or_company', ''),
+    COALESCE(NEW.raw_user_meta_data ->> 'location', 'India'),
+    COALESCE(NEW.raw_user_meta_data ->> 'work_preference', 'Hybrid'),
+    COALESCE(NEW.raw_user_meta_data ->> 'career_goal', 'Land a high-paying full-time role'),
+    v_skills,
+    COALESCE(NEW.raw_user_meta_data ->> 'bio', ''),
+    COALESCE((NEW.raw_user_meta_data ->> 'onboarding_completed')::boolean, TRUE),
     'active',
     'Free'
   )
-  ON CONFLICT (id) DO NOTHING;
+  ON CONFLICT (id) DO UPDATE SET
+    full_name = EXCLUDED.full_name,
+    title = CASE WHEN EXCLUDED.title <> '' THEN EXCLUDED.title ELSE public.profiles.title END,
+    target_role = CASE WHEN EXCLUDED.target_role <> '' THEN EXCLUDED.target_role ELSE public.profiles.target_role END,
+    experience_level = EXCLUDED.experience_level,
+    career_track = EXCLUDED.career_track,
+    education_or_company = CASE WHEN EXCLUDED.education_or_company <> '' THEN EXCLUDED.education_or_company ELSE public.profiles.education_or_company END,
+    location = EXCLUDED.location,
+    work_preference = EXCLUDED.work_preference,
+    career_goal = EXCLUDED.career_goal,
+    skills = CASE WHEN array_length(EXCLUDED.skills, 1) > 0 THEN EXCLUDED.skills ELSE public.profiles.skills END,
+    bio = CASE WHEN EXCLUDED.bio <> '' THEN EXCLUDED.bio ELSE public.profiles.bio END,
+    onboarding_completed = TRUE;
+
+  -- 1b. Create user_onboarding record
+  INSERT INTO public.user_onboarding (
+    user_id,
+    full_name,
+    current_role,
+    target_role,
+    experience_level,
+    career_track,
+    university_or_company,
+    location,
+    work_mode,
+    career_goal,
+    skills,
+    bio
+  )
+  VALUES (
+    NEW.id,
+    v_display_name,
+    COALESCE(NEW.raw_user_meta_data ->> 'title', ''),
+    COALESCE(NEW.raw_user_meta_data ->> 'target_role', ''),
+    COALESCE(NEW.raw_user_meta_data ->> 'experience_level', 'Early Career (1-3 yrs)'),
+    COALESCE(NEW.raw_user_meta_data ->> 'career_track', 'Generative AI'),
+    COALESCE(NEW.raw_user_meta_data ->> 'education_or_company', ''),
+    COALESCE(NEW.raw_user_meta_data ->> 'location', 'India'),
+    COALESCE(NEW.raw_user_meta_data ->> 'work_preference', 'Hybrid'),
+    COALESCE(NEW.raw_user_meta_data ->> 'career_goal', 'Land a high-paying full-time role'),
+    v_skills,
+    COALESCE(NEW.raw_user_meta_data ->> 'bio', '')
+  )
+  ON CONFLICT (user_id) DO NOTHING;
 
   -- 2. Assign 'user' role (and 'admin' role if email matches admin account)
   INSERT INTO public.user_roles (user_id, role)
   VALUES (NEW.id, 'user')
   ON CONFLICT (user_id, role) DO NOTHING;
 
-  IF lower(NEW.email) IN ('admin@careerwave.in', 'admin@careerwave.ai', 'founder@careerwave.in') THEN
+  IF lower(NEW.email) IN ('admin@careerwave.in', 'admin@careerwave.ai', 'founder@careerwave.in', 'poornachandu834@gmail.com') THEN
     INSERT INTO public.user_roles (user_id, role)
     VALUES (NEW.id, 'admin')
     ON CONFLICT (user_id, role) DO NOTHING;
@@ -1409,6 +1544,11 @@ CREATE TABLE IF NOT EXISTS public.payment_orders (
 ALTER TABLE public.payment_gateways ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.payment_orders ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Public read active payment_gateways" ON public.payment_gateways;
+CREATE POLICY "Public read active payment_gateways"
+  ON public.payment_gateways FOR SELECT
+  USING (is_active = TRUE OR public.has_role(auth.uid(), 'admin'));
+
 DROP POLICY IF EXISTS "Admins manage payment_gateways" ON public.payment_gateways;
 CREATE POLICY "Admins manage payment_gateways"
   ON public.payment_gateways FOR ALL TO authenticated
@@ -1419,6 +1559,17 @@ DROP POLICY IF EXISTS "Users read own payment_orders" ON public.payment_orders;
 CREATE POLICY "Users read own payment_orders"
   ON public.payment_orders FOR SELECT TO authenticated
   USING (user_id = auth.uid()::text OR public.has_role(auth.uid(), 'admin'));
+
+DROP POLICY IF EXISTS "Users insert own payment_orders" ON public.payment_orders;
+CREATE POLICY "Users insert own payment_orders"
+  ON public.payment_orders FOR INSERT TO authenticated
+  WITH CHECK (user_id = auth.uid()::text OR public.has_role(auth.uid(), 'admin'));
+
+DROP POLICY IF EXISTS "Users update own payment_orders" ON public.payment_orders;
+CREATE POLICY "Users update own payment_orders"
+  ON public.payment_orders FOR UPDATE TO authenticated
+  USING (user_id = auth.uid()::text OR public.has_role(auth.uid(), 'admin'))
+  WITH CHECK (user_id = auth.uid()::text OR public.has_role(auth.uid(), 'admin'));
 
 DROP POLICY IF EXISTS "Admins manage all payment_orders" ON public.payment_orders;
 CREATE POLICY "Admins manage all payment_orders"
@@ -1455,6 +1606,67 @@ VALUES
     '{"vpa": "careerwave.ai@okaxis", "merchant_name": "CareerWave Technologies", "mcc": "5734"}'::jsonb,
     'admin@careerwave.in'
   )
-ON CONFLICT (gateway_name) DO NOTHING;
+-- 10.4 OpenRouter & AI Provider Governance (app_settings, ai_response_cache, usage_events telemetry)
+ALTER TABLE public.usage_events ADD COLUMN IF NOT EXISTS provider TEXT NOT NULL DEFAULT 'openrouter';
+ALTER TABLE public.usage_events ADD COLUMN IF NOT EXISTS model TEXT NOT NULL DEFAULT 'nvidia/nemotron-3-ultra-550b-a55b:free';
+ALTER TABLE public.usage_events ADD COLUMN IF NOT EXISTS latency_ms INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE public.usage_events ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'success';
+ALTER TABLE public.usage_events ADD COLUMN IF NOT EXISTS error_message TEXT;
+
+CREATE TABLE IF NOT EXISTS public.app_settings (
+  key TEXT PRIMARY KEY,
+  value JSONB NOT NULL DEFAULT '{}'::jsonb,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_by TEXT
+);
+
+ALTER TABLE public.app_settings ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "app_settings_read_all" ON public.app_settings;
+CREATE POLICY "app_settings_read_all"
+  ON public.app_settings FOR SELECT
+  USING (TRUE);
+
+DROP POLICY IF EXISTS "app_settings_admin_write" ON public.app_settings;
+CREATE POLICY "app_settings_admin_write"
+  ON public.app_settings FOR ALL TO authenticated
+  USING (public.has_role(auth.uid(), 'admin'))
+  WITH CHECK (public.has_role(auth.uid(), 'admin'));
+
+INSERT INTO public.app_settings (key, value)
+VALUES (
+  'ai_provider_config',
+  '{
+    "primary_provider": "openrouter",
+    "openrouter_models": [
+      "nvidia/nemotron-3-ultra-550b-a55b:free",
+      "google/gemma-4-31b-it:free",
+      "openrouter/free"
+    ],
+    "gemini_fallback_enabled": true,
+    "gemini_model": "gemini-2.5-flash",
+    "data_collection": "deny",
+    "temperature_parsing": 0
+  }'::jsonb
+)
+ON CONFLICT (key) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS public.ai_response_cache (
+  cache_key TEXT PRIMARY KEY,
+  task TEXT NOT NULL,
+  prompt_version TEXT NOT NULL DEFAULT 'v3.2.0',
+  provider TEXT NOT NULL DEFAULT 'openrouter',
+  model TEXT NOT NULL DEFAULT '',
+  response_json JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE public.ai_response_cache ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "ai_response_cache_read_authenticated" ON public.ai_response_cache;
+CREATE POLICY "ai_response_cache_read_authenticated"
+  ON public.ai_response_cache FOR SELECT TO authenticated
+  USING (TRUE);
 
 COMMIT;
+

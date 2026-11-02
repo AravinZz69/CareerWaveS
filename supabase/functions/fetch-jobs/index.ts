@@ -369,6 +369,80 @@ async function fetchFromJooble(params: {
   });
 }
 
+// 0. Primary Apify Job Scraper Source (Uses APIFY_TOKEN Supabase Secret)
+async function fetchFromApify(params: {
+  query: string;
+  location: string;
+  remote: boolean;
+  sector: string;
+  employmentType: string;
+  apiToken: string;
+}): Promise<NormalizedJobRecord[]> {
+  const actorId = Deno.env.get('APIFY_ACTOR_ID') || 'bebity~linkedin-jobs-scraper';
+  const url = `https://api.apify.com/v2/acts/${encodeURIComponent(
+    actorId
+  )}/run-sync-get-dataset-items?token=${encodeURIComponent(params.apiToken)}`;
+
+  const searchTitle =
+    params.query ||
+    (params.sector && params.sector !== 'All' ? `${params.sector} Engineer` : 'Software Engineer');
+  const searchLocation = params.location && params.location !== 'All' ? params.location : 'India';
+
+  const res = await fetchWithTimeout(
+    url,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: searchTitle,
+        location: searchLocation,
+        rows: 20,
+      }),
+    },
+    18000
+  );
+
+  if (!res.ok) {
+    throw new Error(`Apify API returned HTTP ${res.status}`);
+  }
+
+  const items = await res.json();
+  if (!Array.isArray(items)) return [];
+  const nowIso = new Date().toISOString();
+
+  return items.map((item: any, idx: number): NormalizedJobRecord => {
+    const title = sanitizeDescription(item.title || item.jobTitle || searchTitle);
+    const company = String(item.companyName || item.company || 'Technology Employer').trim();
+    const location = String(item.location || searchLocation).trim();
+    const description = sanitizeDescription(item.description || item.descriptionText || '');
+    const rawApply = item.applyUrl || item.jobUrl || item.url || '';
+    const applyUrl = isValidHttpsUrl(rawApply) ? String(rawApply).trim() : '';
+
+    return {
+      source: 'apify',
+      external_id: String(item.id || item.jobId || `apify_${company}_${title}_${idx}`),
+      title,
+      company,
+      company_logo:
+        item.companyLogo ||
+        `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(company)}`,
+      location,
+      is_remote: params.remote || /remote/i.test(`${title} ${location} ${description}`),
+      employment_type: normalizeEmpType(item.contractType || item.employmentType, title),
+      salary_min: typeof item.salaryMin === 'number' ? Math.round(item.salaryMin) : null,
+      salary_max: typeof item.salaryMax === 'number' ? Math.round(item.salaryMax) : null,
+      currency: 'INR',
+      description,
+      required_skills: extractSkillsFromText(`${title} ${description}`),
+      posted_at: item.publishedAt ? new Date(item.publishedAt).toISOString() : nowIso,
+      apply_url: applyUrl,
+      source_platform: detectPlatform(item.source || 'LinkedIn', applyUrl),
+      sector: inferSector(title, description, params.sector),
+      fetched_at: nowIso,
+    };
+  });
+}
+
 function deduplicateJobs(jobs: NormalizedJobRecord[]): NormalizedJobRecord[] {
   const map = new Map<string, NormalizedJobRecord>();
   const norm = (s: string) =>
@@ -399,10 +473,11 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    const body = await req.json().catch(() => ({}));
-    const query = String(body.query || body.role || '').trim();
-    const location = String(body.location || 'India').trim();
-    const remote = Boolean(body.remote);
+    const body = req.method === 'GET' ? {} : await req.json().catch(() => ({}));
+    const urlObj = new URL(req.url);
+    const query = String(body.query || body.role || urlObj.searchParams.get('query') || '').trim();
+    const location = String(body.location || urlObj.searchParams.get('location') || 'India').trim();
+    const remote = Boolean(body.remote || urlObj.searchParams.get('remote') === 'true');
     const dateWindow = String(body.dateWindow || body.timeframe || '7d').trim();
     const sector = String(body.sector || 'All').trim();
     const employmentType = String(body.employmentType || 'all').trim();
@@ -411,7 +486,8 @@ Deno.serve(async (req: Request) => {
 
     const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
-    const supabase = supabaseUrl && supabaseServiceKey ? createClient(supabaseUrl, supabaseServiceKey) : null;
+    const supabase =
+      supabaseUrl && supabaseServiceKey ? createClient(supabaseUrl, supabaseServiceKey) : null;
 
     const querySignature = JSON.stringify({
       q: query.toLowerCase(),
@@ -446,6 +522,7 @@ Deno.serve(async (req: Request) => {
               fromCache: true,
               cachedAt: cachedMeta.fetched_at,
               jobs: cachedRows,
+              totalCount: cachedRows.length,
               sources: cachedMeta.sources_status || [],
               partialFailure: false,
             }),
@@ -455,7 +532,8 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    // 2. Read aggregator secrets from Supabase Edge Function environment
+    // 2. Read aggregator secrets from Supabase Edge Function environment (APIFY_TOKEN primary)
+    const apifyToken = (Deno.env.get('APIFY_TOKEN') || '').trim();
     const jsearchKey = (Deno.env.get('JSEARCH_API_KEY') || '').trim();
     const adzunaAppId = (Deno.env.get('ADZUNA_APP_ID') || '').trim();
     const adzunaAppKey = (Deno.env.get('ADZUNA_APP_KEY') || '').trim();
@@ -463,6 +541,21 @@ Deno.serve(async (req: Request) => {
 
     const tasks: Promise<{ source: string; jobs: NormalizedJobRecord[] }>[] = [];
     const sourcesStatus: any[] = [];
+
+    if (apifyToken) {
+      tasks.push(
+        fetchFromApify({
+          query,
+          location,
+          remote,
+          sector,
+          employmentType,
+          apiToken: apifyToken,
+        }).then((jobs) => ({ source: 'apify', jobs }))
+      );
+    } else {
+      sourcesStatus.push({ source: 'apify', configured: false, ok: false, count: 0 });
+    }
 
     if (jsearchKey) {
       tasks.push(
@@ -477,8 +570,6 @@ Deno.serve(async (req: Request) => {
           apiKey: jsearchKey,
         }).then((jobs) => ({ source: 'jsearch', jobs }))
       );
-    } else {
-      sourcesStatus.push({ source: 'jsearch', configured: false, ok: false, count: 0 });
     }
 
     if (adzunaAppId && adzunaAppKey) {
@@ -494,8 +585,6 @@ Deno.serve(async (req: Request) => {
           appKey: adzunaAppKey,
         }).then((jobs) => ({ source: 'adzuna', jobs }))
       );
-    } else {
-      sourcesStatus.push({ source: 'adzuna', configured: false, ok: false, count: 0 });
     }
 
     if (joobleKey) {
@@ -509,8 +598,6 @@ Deno.serve(async (req: Request) => {
           apiKey: joobleKey,
         }).then((jobs) => ({ source: 'jooble', jobs }))
       );
-    } else {
-      sourcesStatus.push({ source: 'jooble', configured: false, ok: false, count: 0 });
     }
 
     // 3. Execute enabled sources in parallel with Promise.allSettled
@@ -530,7 +617,7 @@ Deno.serve(async (req: Request) => {
       } else {
         partialFailure = true;
         sourcesStatus.push({
-          source: 'aggregator',
+          source: 'apify',
           configured: true,
           ok: false,
           count: 0,
@@ -539,7 +626,7 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    const deduped = deduplicateJobs(collected);
+    let deduped = deduplicateJobs(collected);
 
     // 4. Upsert normalized jobs into public.jobs on (source, external_id)
     if (supabase && deduped.length > 0) {
@@ -553,12 +640,25 @@ Deno.serve(async (req: Request) => {
       });
     }
 
+    // 5. If no external aggregator returned new rows, read existing cached jobs from public.jobs
+    if (supabase && deduped.length === 0) {
+      const { data: existingJobs } = await supabase
+        .from('jobs')
+        .select('*')
+        .order('posted_at', { ascending: false })
+        .limit(50);
+      if (existingJobs && existingJobs.length > 0) {
+        deduped = existingJobs;
+      }
+    }
+
     return new Response(
       JSON.stringify({
         success: true,
-        fromCache: false,
+        fromCache: deduped.length > 0 && collected.length === 0,
         cachedAt: new Date().toISOString(),
         jobs: deduped,
+        totalCount: deduped.length,
         sources: sourcesStatus,
         partialFailure,
       }),
@@ -568,7 +668,7 @@ Deno.serve(async (req: Request) => {
     return new Response(
       JSON.stringify({
         success: false,
-        error: err?.message || 'Failed to fetch multi-source jobs.',
+        error: err?.message || 'Failed to fetch jobs from Edge Function.',
       }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );

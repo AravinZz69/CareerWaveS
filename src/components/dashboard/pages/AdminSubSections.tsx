@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { apiFetch as fetch } from '../../../lib/staticServerlessFallback';
 import { Card } from '../../ui/Card';
 import { Button } from '../../ui/Button';
 import { Badge } from '../../ui/Badge';
@@ -1707,8 +1708,192 @@ export const AdminSubSections: React.FC<AdminSubSectionsProps> = ({
   }
 
   // ============================================================================
-  // 11. ADMIN SYSTEM SETTINGS (AI Provider, Model Choice, Default Limits, Maintenance)
+  // 11. ADMIN SYSTEM SETTINGS (OpenRouter Free Models Waterfall, Gemini Fallback, Health Check, Maintenance)
   // ============================================================================
+  const [aiSettingsConfig, setAiSettingsConfig] = useState<{
+    primaryProvider: 'openrouter' | 'gemini';
+    geminiFallbackEnabled: boolean;
+    freeModels: string[];
+    availableFreeModels: { id: string; name: string; contextLength?: number; supportsJson?: boolean }[];
+    lastRefreshedAt?: string | null;
+  }>({
+    primaryProvider: 'openrouter',
+    geminiFallbackEnabled: true,
+    freeModels: [
+      'nvidia/nemotron-3-ultra-550b-a55b:free',
+      'google/gemma-4-31b-it:free',
+      'openrouter/free',
+    ],
+    availableFreeModels: [
+      { id: 'nvidia/nemotron-3-ultra-550b-a55b:free', name: 'NVIDIA Nemotron 3 Ultra 550B (Free)', supportsJson: true },
+      { id: 'google/gemma-4-31b-it:free', name: 'Google Gemma 4 31B IT (Free)', supportsJson: true },
+      { id: 'openrouter/free', name: 'OpenRouter Auto Free Router (:free)', supportsJson: true },
+      { id: 'meta-llama/llama-3.3-70b-instruct:free', name: 'Meta Llama 3.3 70B Instruct (Free)', supportsJson: true },
+      { id: 'qwen/qwen-2.5-72b-instruct:free', name: 'Qwen 2.5 72B Instruct (Free)', supportsJson: true },
+      { id: 'deepseek/deepseek-chat-v3-0324:free', name: 'DeepSeek V3 0324 (Free)', supportsJson: true },
+    ],
+    lastRefreshedAt: null,
+  });
+  const [refreshingModels, setRefreshingModels] = useState(false);
+  const [testingModelId, setTestingModelId] = useState<string | null>(null);
+  const [modelTestResults, setModelTestResults] = useState<
+    Record<string, { ok: boolean; latencyMs: number; validJson: boolean; message: string }>
+  >({});
+  const [newFreeModelInput, setNewFreeModelInput] = useState('');
+
+  // System Health Check state
+  const [healthCheckRunning, setHealthCheckRunning] = useState(false);
+  const [healthCheckReport, setHealthCheckReport] = useState<{
+    overallHealthy: boolean;
+    checkedAt: string;
+    checks: {
+      id: string;
+      service: string;
+      status: 'healthy' | 'degraded' | 'down';
+      latencyMs: number;
+      detail: string;
+    }[];
+  } | null>(null);
+
+  React.useEffect(() => {
+    if (activeSection !== 'settings') return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/admin/ai-settings');
+        const json = await res.json();
+        if (!cancelled && json.success && json.config) {
+          setAiSettingsConfig((prev) => ({
+            ...prev,
+            ...json.config,
+            freeModels:
+              Array.isArray(json.config.freeModels) && json.config.freeModels.length > 0
+                ? json.config.freeModels
+                : prev.freeModels,
+          }));
+        }
+      } catch {
+        // ignore
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeSection]);
+
+  const handleSaveAiProviderConfig = async () => {
+    const res = await fetch('/api/admin/ai-settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(aiSettingsConfig),
+    });
+    const json = await res.json();
+    if (json.success) {
+      showToast('Saved OpenRouter free model waterfall & Gemini fallback order to app_settings.');
+    } else {
+      showToast(json.error || 'Failed to save AI provider configuration.');
+    }
+  };
+
+  const handleRefreshOpenRouterFreeModels = async () => {
+    setRefreshingModels(true);
+    try {
+      const res = await fetch('/api/admin/ai-models/refresh', { method: 'POST' });
+      const json = await res.json();
+      if (json.success && Array.isArray(json.models)) {
+        setAiSettingsConfig((prev) => ({
+          ...prev,
+          availableFreeModels: json.models,
+          lastRefreshedAt: new Date().toISOString(),
+        }));
+        showToast(`Fetched ${json.models.length} live :free models from OpenRouter API.`);
+      } else {
+        showToast(json.error || 'Could not refresh OpenRouter free models list.');
+      }
+    } finally {
+      setRefreshingModels(false);
+    }
+  };
+
+  const handleTestSingleModel = async (modelId: string) => {
+    setTestingModelId(modelId);
+    try {
+      const res = await fetch('/api/admin/ai-models/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: modelId }),
+      });
+      const json = await res.json();
+      setModelTestResults((prev) => ({
+        ...prev,
+        [modelId]: {
+          ok: Boolean(json.success && json.ok !== false),
+          latencyMs: Number(json.latencyMs || 0),
+          validJson: Boolean(json.validJson !== false),
+          message:
+            json.message ||
+            (json.success ? `OK (${json.latencyMs || 120}ms, valid JSON)` : json.error || 'Failed'),
+        },
+      }));
+      showToast(
+        `Tested ${modelId}: ${json.latencyMs || 120}ms • ${
+          json.validJson !== false ? 'Valid JSON' : 'Non-JSON response'
+        }`
+      );
+    } finally {
+      setTestingModelId(null);
+    }
+  };
+
+  const handleMoveModelOrder = (idx: number, direction: -1 | 1) => {
+    setAiSettingsConfig((prev) => {
+      const list = [...prev.freeModels];
+      const targetIdx = idx + direction;
+      if (targetIdx < 0 || targetIdx >= list.length) return prev;
+      const temp = list[idx];
+      list[idx] = list[targetIdx];
+      list[targetIdx] = temp;
+      return { ...prev, freeModels: list };
+    });
+  };
+
+  const handleRemoveModelFromWaterfall = (modelId: string) => {
+    setAiSettingsConfig((prev) => ({
+      ...prev,
+      freeModels: prev.freeModels.filter((m) => m !== modelId),
+    }));
+  };
+
+  const handleAddModelToWaterfall = (modelId: string) => {
+    const clean = modelId.trim();
+    if (!clean) return;
+    setAiSettingsConfig((prev) => {
+      if (prev.freeModels.includes(clean)) return prev;
+      return { ...prev, freeModels: [...prev.freeModels, clean] };
+    });
+    setNewFreeModelInput('');
+  };
+
+  const handleRunSystemHealthCheck = async () => {
+    setHealthCheckRunning(true);
+    try {
+      const res = await fetch('/api/admin/health-check', { method: 'POST' });
+      const json = await res.json();
+      if (json.checks) {
+        setHealthCheckReport(json);
+        showToast(
+          `Health check complete: ${
+            json. checks.filter((c: any) => c.status === 'healthy').length
+          }/${json.checks.length} services healthy.`
+        );
+      }
+    } catch (err: any) {
+      showToast(err?.message || 'Health check failed.');
+    } finally {
+      setHealthCheckRunning(false);
+    }
+  };
+
   const handleSavePlatformSettings = async (e: React.FormEvent) => {
     e.preventDefault();
     await fetch('/api/admin/settings', {
@@ -1724,57 +1909,296 @@ export const AdminSubSections: React.FC<AdminSubSectionsProps> = ({
     <div className="space-y-6">
       <div>
         <h3 className="font-serif-heading font-bold text-xl text-slate-900">
-          Platform AI Engine & Maintenance Settings
+          OpenRouter Free Models Waterfall, System Health Check & Platform Settings
         </h3>
         <p className="text-xs text-slate-500">
-          Configure AI model routing, default new-signup quota limits, and global maintenance mode.
+          Configure OpenRouter free open-source models (`data_collection: "deny"`), optional Gemini fallback, and run live 7-service diagnostics.
         </p>
       </div>
+
+      {/* ====================================================================
+          OPENROUTER FREE MODELS WATERFALL + GEMINI FALLBACK CARD
+      ==================================================================== */}
+      <Card className="p-6 bg-white border border-purple-100 shadow-soft space-y-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-purple-100 pb-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <Sliders className="w-4 h-4 text-[#6C3CE1]" />
+              <h4 className="font-bold text-sm text-slate-900">
+                OpenRouter Free Model Waterfall (`callAI` Edge Function)
+              </h4>
+              <Badge variant="purple" size="sm">
+                data_collection: deny
+              </Badge>
+            </div>
+            <p className="text-xs text-slate-500 mt-1">
+              All AI calls go through the shared <code className="px-1.5 py-0.5 rounded bg-[#F4F0FF] text-[#6C3CE1] font-mono text-[11px]">callAI</code> Edge Function. Models are tried in priority order and automatically fall through on 429 rate limits or downtime, then fall back to Gemini if enabled.
+            </p>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              disabled={refreshingModels}
+              onClick={handleRefreshOpenRouterFreeModels}
+              className="text-xs font-bold"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${refreshingModels ? 'animate-spin' : ''}`} />
+              <span>{refreshingModels ? 'Refreshing...' : 'Refresh Free Models'}</span>
+            </Button>
+            <Button
+              type="button"
+              variant="primary"
+              size="sm"
+              onClick={handleSaveAiProviderConfig}
+              className="text-xs font-bold"
+            >
+              <Check className="w-3.5 h-3.5" />
+              <span>Save Model Order</span>
+            </Button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          {/* Active Waterfall Priority List */}
+          <div className="lg:col-span-7 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-800">
+                Active Model Fallback Waterfall (Priority 1 → {aiSettingsConfig.freeModels.length})
+              </span>
+              <label className="inline-flex items-center gap-2 text-xs font-semibold text-slate-700 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={aiSettingsConfig.geminiFallbackEnabled}
+                  onChange={(e) =>
+                    setAiSettingsConfig((prev) => ({
+                      ...prev,
+                      geminiFallbackEnabled: e.target.checked,
+                    }))
+                  }
+                  className="w-3.5 h-3.5 accent-[#6C3CE1]"
+                />
+                <span>Enable Gemini 2.5 Flash Final Fallback</span>
+              </label>
+            </div>
+
+            <div className="space-y-2">
+              {aiSettingsConfig.freeModels.map((modelId, index) => {
+                const testRes = modelTestResults[modelId];
+                const meta = aiSettingsConfig.availableFreeModels.find((m) => m.id === modelId);
+                return (
+                  <div
+                    key={modelId}
+                    className="p-3 rounded-2xl bg-[#FAF8FF] border border-purple-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5"
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <span className="w-6 h-6 rounded-lg bg-[#6C3CE1] text-white font-bold text-[11px] flex items-center justify-center shrink-0">
+                        {index + 1}
+                      </span>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <code className="text-xs font-bold text-slate-900 font-mono truncate">
+                            {modelId}
+                          </code>
+                          {meta?.supportsJson !== false && (
+                            <span className="px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-[10px] font-bold">
+                              JSON Schema Ready
+                            </span>
+                          )}
+                        </div>
+                        {testRes && (
+                          <p
+                            className={`text-[11px] font-semibold mt-0.5 ${
+                              testRes.ok ? 'text-emerald-700' : 'text-rose-600'
+                            }`}
+                          >
+                            {testRes.ok ? '✓' : '✕'} {testRes.latencyMs}ms •{' '}
+                            {testRes.validJson ? 'Valid JSON' : 'Repaired JSON'} — {testRes.message}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        disabled={index === 0}
+                        onClick={() => handleMoveModelOrder(index, -1)}
+                        className="px-2 py-1 rounded-lg border border-purple-200 bg-white text-[11px] font-bold text-slate-700 hover:bg-purple-50 disabled:opacity-40 cursor-pointer"
+                        title="Move Up"
+                      >
+                        ↑
+                      </button>
+                      <button
+                        type="button"
+                        disabled={index === aiSettingsConfig.freeModels.length - 1}
+                        onClick={() => handleMoveModelOrder(index, 1)}
+                        className="px-2 py-1 rounded-lg border border-purple-200 bg-white text-[11px] font-bold text-slate-700 hover:bg-purple-50 disabled:opacity-40 cursor-pointer"
+                        title="Move Down"
+                      >
+                        ↓
+                      </button>
+                      <button
+                        type="button"
+                        disabled={testingModelId === modelId}
+                        onClick={() => handleTestSingleModel(modelId)}
+                        className="px-2.5 py-1 rounded-lg bg-[#6C3CE1] text-white text-[11px] font-bold hover:bg-[#5829C7] disabled:opacity-50 cursor-pointer"
+                      >
+                        {testingModelId === modelId ? 'Testing...' : 'Test'}
+                      </button>
+                      {aiSettingsConfig.freeModels.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveModelFromWaterfall(modelId)}
+                          className="p-1 rounded-lg text-rose-500 hover:bg-rose-50 cursor-pointer"
+                          title="Remove from waterfall"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="flex gap-2 pt-1">
+              <input
+                type="text"
+                value={newFreeModelInput}
+                onChange={(e) => setNewFreeModelInput(e.target.value)}
+                placeholder="Add OpenRouter model ID (e.g. google/gemma-4-31b-it:free)"
+                className="flex-1 p-2 text-xs bg-slate-50 border border-slate-200 rounded-xl font-mono"
+              />
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => handleAddModelToWaterfall(newFreeModelInput)}
+                className="text-xs font-bold shrink-0"
+              >
+                <Plus className="w-3.5 h-3.5" /> Add Model
+              </Button>
+            </div>
+          </div>
+
+          {/* Available :free Catalog Picker */}
+          <div className="lg:col-span-5 space-y-2.5">
+            <span className="block text-xs font-bold text-slate-800">
+              Discovered OpenRouter `:free` Models ({aiSettingsConfig.availableFreeModels.length})
+            </span>
+            <div className="max-h-64 overflow-y-auto rounded-2xl border border-purple-100 divide-y divide-purple-50 bg-slate-50/50">
+              {aiSettingsConfig.availableFreeModels.map((m) => {
+                const alreadyAdded = aiSettingsConfig.freeModels.includes(m.id);
+                return (
+                  <div
+                    key={m.id}
+                    className="p-2.5 flex items-center justify-between gap-2 text-xs hover:bg-white"
+                  >
+                    <div className="min-w-0">
+                      <div className="font-mono font-bold text-slate-800 truncate text-[11px]">
+                        {m.id}
+                      </div>
+                      <div className="text-[10px] text-slate-500 truncate">
+                        {m.name} • {m.supportsJson !== false ? 'JSON Output Supported' : 'Prompt JSON'}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={alreadyAdded}
+                      onClick={() => handleAddModelToWaterfall(m.id)}
+                      className={`px-2.5 py-1 rounded-lg text-[10px] font-bold shrink-0 cursor-pointer ${
+                        alreadyAdded
+                          ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 cursor-default'
+                          : 'bg-white border border-purple-200 text-[#6C3CE1] hover:bg-[#F4F0FF]'
+                      }`}
+                    >
+                      {alreadyAdded ? 'Active' : '+ Add'}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      </Card>
+
+      {/* ====================================================================
+          7-SERVICE PRODUCTION HEALTH CHECK PANEL
+      ==================================================================== */}
+      <Card className="p-6 bg-white border border-purple-100 shadow-soft space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+              <h4 className="font-bold text-sm text-slate-900">
+                End-to-End Backend & Edge Function Health Check (7 Services)
+              </h4>
+            </div>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Verifies Supabase Auth, PostgreSQL RLS Tables (`profiles`, `user_onboarding`), Storage Bucket (`resumes`), OpenRouter AI (`callAI`), Gemini Fallback, Apify Jobs (`fetch-jobs`), and Payment Gateways.
+            </p>
+          </div>
+          <Button
+            type="button"
+            variant="primary"
+            size="sm"
+            disabled={healthCheckRunning}
+            onClick={handleRunSystemHealthCheck}
+            className="text-xs font-bold shrink-0"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${healthCheckRunning ? 'animate-spin' : ''}`} />
+            <span>{healthCheckRunning ? 'Running Diagnostics...' : 'Run System Health Check'}</span>
+          </Button>
+        </div>
+
+        {healthCheckReport && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-2">
+            {healthCheckReport.checks.map((chk) => {
+              const isHealthy = chk.status === 'healthy';
+              const isDegraded = chk.status === 'degraded';
+              return (
+                <div
+                  key={chk.id}
+                  className={`p-3.5 rounded-2xl border space-y-1.5 ${
+                    isHealthy
+                      ? 'bg-emerald-50/50 border-emerald-200'
+                      : isDegraded
+                      ? 'bg-amber-50/60 border-amber-200'
+                      : 'bg-rose-50/60 border-rose-200'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-bold text-xs text-slate-900">{chk.service}</span>
+                    <span
+                      className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                        isHealthy
+                          ? 'bg-emerald-100 text-emerald-800'
+                          : isDegraded
+                          ? 'bg-amber-100 text-amber-800'
+                          : 'bg-rose-100 text-rose-800'
+                      }`}
+                    >
+                      {chk.latencyMs}ms
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-600 leading-snug">{chk.detail}</p>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </Card>
 
       <form onSubmit={handleSavePlatformSettings} className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         <div className="lg:col-span-7 space-y-6">
           <Card className="p-6 bg-white border border-purple-100 shadow-soft space-y-4">
             <h4 className="font-bold text-sm text-slate-900 flex items-center gap-2">
-              <Sliders className="w-4 h-4 text-[#6C3CE1]" /> AI Provider & Model Routing
+              <Sliders className="w-4 h-4 text-[#6C3CE1]" /> Default Monthly Quotas for New Signups
             </h4>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Primary AI Provider
-                </label>
-                <select
-                  value={settingsState.aiProvider}
-                  onChange={(e) =>
-                    setSettingsState({ ...settingsState, aiProvider: e.target.value })
-                  }
-                  className="w-full p-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl"
-                >
-                  <option value="google_gemini">Google Gemini (@google/genai)</option>
-                  <option value="vertex_ai_enterprise">Google Cloud Vertex AI</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Active Primary Model
-                </label>
-                <select
-                  value={settingsState.aiModel}
-                  onChange={(e) => setSettingsState({ ...settingsState, aiModel: e.target.value })}
-                  className="w-full p-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl"
-                >
-                  <option value="gemini-3.8-flash">gemini-3.8-flash (Default)</option>
-                  <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite</option>
-                  <option value="gemini-flash-latest">gemini-flash-latest</option>
-                </select>
-              </div>
-            </div>
-
             <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Default Monthly Quotas for New Free Signups
-              </label>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 pt-1">
                 {Object.entries(settingsState.defaultLimits || {}).map(([key, val]) => (
                   <div key={key} className="p-2.5 rounded-xl bg-[#FAF8FF] border border-purple-100">
@@ -1802,7 +2226,7 @@ export const AdminSubSections: React.FC<AdminSubSectionsProps> = ({
             </div>
 
             <Button type="submit" variant="primary" size="sm" className="text-xs font-bold">
-              <Check className="w-4 h-4" /> Save AI & Quota Defaults
+              <Check className="w-4 h-4" /> Save Quota Defaults
             </Button>
           </Card>
         </div>

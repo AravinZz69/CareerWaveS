@@ -16,6 +16,8 @@ import {
   Home,
   X,
   Sparkles,
+  Pin,
+  PinOff,
 } from 'lucide-react';
 import { DashboardPageId } from './DashboardShell';
 import { useAuth } from '../../context/AuthContext';
@@ -27,6 +29,7 @@ interface SidebarProps {
   sidebarRef: React.RefObject<HTMLElement | null>;
   isPinned: boolean;
   isExpanded: boolean;
+  onTogglePin?: () => void;
   prefersReducedMotion: boolean;
   mobileDrawerOpen: boolean;
   onCloseMobileDrawer: () => void;
@@ -37,6 +40,7 @@ interface SidebarProps {
 interface TooltipState {
   label: string;
   badge?: string;
+  dotColor?: string;
   top: number;
 }
 
@@ -47,6 +51,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   sidebarRef,
   isPinned,
   isExpanded,
+  onTogglePin,
   prefersReducedMotion,
   mobileDrawerOpen,
   onCloseMobileDrawer,
@@ -59,7 +64,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const navItems: {
     id: DashboardPageId;
     label: string;
-    icon: React.FC<{ className?: string }>;
+    icon: React.FC<{ className?: string; strokeWidth?: number }>;
     badge?: string;
     dotColor?: string;
     adminOnly?: boolean;
@@ -114,16 +119,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const transitionClass = prefersReducedMotion
     ? 'transition-none duration-0'
-    : 'transition-all duration-250 ease-in-out';
+    : 'transition-[width,box-shadow] duration-200 ease-out';
 
   const labelTransitionClass = prefersReducedMotion
     ? 'transition-none duration-0'
-    : 'transition-[opacity,transform] duration-250 ease-in-out';
+    : 'transition-[opacity,transform] duration-200 ease-out';
 
   const handleItemHover = (
     e: React.MouseEvent<HTMLElement> | React.FocusEvent<HTMLElement>,
     label: string,
-    badge?: string
+    badge?: string,
+    dotColor?: string
   ) => {
     if (isExpanded) {
       setTooltip(null);
@@ -133,6 +139,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     setTooltip({
       label,
       badge,
+      dotColor,
       top: rect.top + rect.height / 2,
     });
   };
@@ -141,32 +148,30 @@ export const Sidebar: React.FC<SidebarProps> = ({
     <>
       {/* ====================================================================
           DESKTOP FIXED SIDEBAR (>= 1024px)
-          Locked to viewport (fixed top-0 left-0 h-[100dvh]), internal nav scroll,
-          pinned bottom user card, 3s auto-minimize to 72px rail, pinned when expanded
+          - Fixed to viewport (position: fixed, top-0 left-0, height: 100dvh)
+          - Collapsed rail: 72px wide, centered 44x44px buttons, 20px icons, full opacity (1)
+          - Expanded: 260px wide, overlays smoothly when unpinned so main content never jumps
+          - Auto-collapses after 10 seconds of inactivity unless pinned
       ==================================================================== */}
       <aside
         ref={sidebarRef}
         onMouseEnter={onSidebarActivity}
-        onMouseMove={onSidebarActivity}
-        onMouseDown={onSidebarActivity}
-        onClick={onSidebarActivity}
-        onKeyDown={onSidebarActivity}
         onFocusCapture={onSidebarActivity}
         onBlurCapture={onSidebarBlur}
         onMouseLeave={() => setTooltip(null)}
         aria-label="Main Workspace Sidebar"
         className={`fixed top-0 left-0 z-40 hidden lg:flex flex-col h-[100dvh] max-h-[100dvh] bg-white border-r border-slate-200 select-none overflow-hidden ${transitionClass} ${
-          isExpanded ? 'w-[272px]' : 'w-[72px]'
+          isExpanded ? 'w-[260px]' : 'w-[72px]'
         } ${
           isExpanded && !isPinned
-            ? 'shadow-[14px_0_36px_-6px_rgba(15,23,42,0.12),4px_0_14px_-2px_rgba(108,60,225,0.07)]'
+            ? 'shadow-[16px_0_40px_-8px_rgba(15,23,42,0.14),4px_0_16px_-2px_rgba(108,60,225,0.09)]'
             : 'shadow-none'
         }`}
       >
         {/* 1. Pinned Top Brand Header */}
         <div
           className={`shrink-0 h-20 border-b border-slate-200 flex items-center ${
-            isExpanded ? 'justify-between px-4' : 'justify-center px-2'
+            isExpanded ? 'justify-between px-4' : 'justify-center px-0'
           }`}
         >
           {isExpanded ? (
@@ -179,31 +184,50 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <img
                   src="/assets/aistudio/CareerWaves_CWS_Growth_Logo_2a4e39b3.png"
                   alt="CareerWave Logo"
-                  className="h-11 w-auto object-contain group-hover:scale-[1.02] transition-transform"
+                  className="h-10 w-auto object-contain group-hover:scale-[1.02] transition-transform"
                 />
               </button>
 
               <div className="flex items-center gap-1 shrink-0">
+                {onTogglePin && (
+                  <button
+                    type="button"
+                    onClick={onTogglePin}
+                    title={isPinned ? 'Unpin sidebar (Ctrl+B)' : 'Pin sidebar open (Ctrl+B)'}
+                    aria-label={isPinned ? 'Unpin sidebar' : 'Pin sidebar open'}
+                    className={`rounded-xl p-2 transition-colors cursor-pointer ${
+                      isPinned
+                        ? 'bg-[#F3EEFF] text-[#6C3CE1]'
+                        : 'text-[#334155] hover:bg-[#F3EEFF] hover:text-[#6C3CE1]'
+                    }`}
+                  >
+                    {isPinned ? (
+                      <Pin className="h-4 w-4 stroke-[2]" />
+                    ) : (
+                      <PinOff className="h-4 w-4 stroke-[2]" />
+                    )}
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={onExitToLanding}
                   title="Return to Home"
                   aria-label="Return to Home"
-                  className="rounded-xl p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-900 transition-colors cursor-pointer"
+                  className="rounded-xl p-2 text-[#334155] hover:bg-[#F3EEFF] hover:text-[#6C3CE1] transition-colors cursor-pointer"
                 >
-                  <Home className="h-4 w-4" />
+                  <Home className="h-4 w-4 stroke-[2]" />
                 </button>
               </div>
             </>
           ) : (
-            /* Collapsed Small Logo Mark */
+            /* Collapsed 44x44px Centered Logo Button */
             <button
               type="button"
               onClick={onExitToLanding}
               onMouseEnter={(e) => handleItemHover(e, 'CareerWave Home')}
               onMouseLeave={() => setTooltip(null)}
               aria-label="CareerWave Home"
-              className="h-11 w-11 rounded-2xl bg-slate-50 border border-slate-200 flex items-center justify-center p-1.5 hover:border-slate-300 transition-colors cursor-pointer"
+              className="h-11 w-11 rounded-xl bg-[#FAF8FF] border border-purple-200 flex items-center justify-center p-1.5 hover:border-[#6C3CE1] transition-colors cursor-pointer mx-auto"
             >
               <img
                 src="/assets/aistudio/CareerWaves_CWS_Growth_Logo_2a4e39b3.png"
@@ -217,22 +241,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {/* 2. Scrollable Middle Navigation List */}
         <nav
           onScroll={() => setTooltip(null)}
-          className={`flex-1 min-h-0 overflow-y-auto overflow-x-hidden sidebar-scroll py-4 space-y-1 ${
-            isExpanded ? 'px-3' : 'px-2'
+          className={`flex-1 min-h-0 overflow-y-auto overflow-x-hidden sidebar-scroll py-3 space-y-1.5 ${
+            isExpanded ? 'px-3' : 'px-3.5'
           }`}
         >
-          <div
-            className={`px-3 mb-2 overflow-hidden whitespace-nowrap ${labelTransitionClass} ${
-              isExpanded
-                ? 'opacity-100 translate-x-0 h-4'
-                : 'opacity-0 -translate-x-2 h-0 mb-0 pointer-events-none'
-            }`}
-          >
-            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-              Workspace
-            </p>
-          </div>
-
           {visibleItems.map((item) => {
             const Icon = item.icon;
             const isActive = activePage === item.id;
@@ -245,68 +257,75 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   setTooltip(null);
                   onSelectPage(item.id);
                 }}
-                onMouseEnter={(e) => handleItemHover(e, item.label, item.badge)}
+                onMouseEnter={(e) =>
+                  handleItemHover(e, item.label, item.badge, item.dotColor)
+                }
                 onMouseLeave={() => setTooltip(null)}
-                onFocus={(e) => handleItemHover(e, item.label, item.badge)}
+                onFocus={(e) =>
+                  handleItemHover(e, item.label, item.badge, item.dotColor)
+                }
                 onBlur={() => setTooltip(null)}
                 aria-label={item.label}
                 aria-current={isActive ? 'page' : undefined}
-                className={`relative w-full flex items-center rounded-xl py-2.5 text-xs font-semibold cursor-pointer group ${transitionClass} ${
+                className={`relative flex items-center rounded-xl text-xs font-semibold cursor-pointer group opacity-100 transition-colors duration-150 ${
                   isExpanded
-                    ? 'justify-between px-3.5'
-                    : 'justify-center px-0'
+                    ? 'w-full h-11 justify-between px-3.5'
+                    : 'h-11 w-11 mx-auto justify-center px-0'
                 } ${
                   isActive
-                    ? 'bg-slate-900 text-white shadow-2xs font-bold'
-                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                    ? 'bg-[#6C3CE1] text-white shadow-xs font-bold'
+                    : 'text-[#334155] hover:bg-[#F3EEFF] hover:text-[#6C3CE1]'
                 }`}
               >
+                {/* Left Accent Bar for Active Item */}
+                {isActive && (
+                  <span
+                    aria-hidden="true"
+                    className={`absolute top-1/2 -translate-y-1/2 w-1 h-6 rounded-r-full ${
+                      isExpanded ? 'left-0 bg-white/90' : '-left-3.5 bg-[#6C3CE1]'
+                    }`}
+                  />
+                )}
+
                 <div
-                  className={`flex items-center min-w-0 ${
+                  className={`flex items-center min-w-0 opacity-100 ${
                     isExpanded ? 'gap-3' : 'justify-center'
                   }`}
                 >
-                  <div className="relative flex items-center justify-center shrink-0">
+                  <div className="relative flex items-center justify-center shrink-0 opacity-100">
                     <Icon
-                      className={`h-4 w-4 shrink-0 ${
+                      strokeWidth={2}
+                      className={`h-5 w-5 shrink-0 opacity-100 ${
                         isActive
                           ? 'text-white'
-                          : 'text-slate-500 group-hover:text-slate-900'
+                          : 'text-[#334155] group-hover:text-[#6C3CE1]'
                       }`}
                     />
-                    {/* Tiny colored dot on the icon when collapsed where a badge existed */}
+                    {/* Status dot on the icon when collapsed */}
                     {!isExpanded && item.badge && (
                       <span
                         className={`absolute -top-1 -right-1 h-2 w-2 rounded-full ring-2 ${
-                          isActive ? 'ring-slate-900' : 'ring-white'
+                          isActive ? 'ring-[#6C3CE1]' : 'ring-white'
                         } ${item.dotColor || 'bg-[#6C3CE1]'}`}
                       />
                     )}
                   </div>
 
-                  <span
-                    className={`truncate whitespace-nowrap ${labelTransitionClass} ${
-                      isExpanded
-                        ? 'opacity-100 translate-x-0 w-auto'
-                        : 'opacity-0 -translate-x-2 w-0 overflow-hidden pointer-events-none'
-                    }`}
-                  >
-                    {item.label}
-                  </span>
+                  {isExpanded && (
+                    <span className={`truncate whitespace-nowrap opacity-100 ${labelTransitionClass}`}>
+                      {item.label}
+                    </span>
+                  )}
                 </div>
 
-                {item.badge && (
+                {isExpanded && item.badge && (
                   <span
-                    className={`rounded-full px-2 py-0.5 text-[10px] font-bold shrink-0 whitespace-nowrap ${labelTransitionClass} ${
-                      isExpanded
-                        ? 'opacity-100 scale-100'
-                        : 'opacity-0 scale-75 w-0 px-0 overflow-hidden pointer-events-none'
-                    } ${
+                    className={`rounded-full px-2 py-0.5 text-[10px] font-bold shrink-0 whitespace-nowrap ${
                       isActive
-                        ? 'bg-white/20 text-white'
+                        ? 'bg-white text-[#6C3CE1]'
                         : item.id === 'admin'
                         ? 'bg-amber-100 text-amber-800'
-                        : 'bg-slate-100 text-slate-700'
+                        : 'bg-[#F3EEFF] text-[#6C3CE1]'
                     }`}
                   >
                     {item.badge}
@@ -317,31 +336,31 @@ export const Sidebar: React.FC<SidebarProps> = ({
           })}
         </nav>
 
-        {/* 3. Pinned Bottom User Card & Compact Upgrade Strip (Never Cut Off) */}
+        {/* 3. Pinned Bottom User Profile + Logout */}
         <div
-          className={`shrink-0 border-t border-slate-200 bg-slate-50/70 ${
-            isExpanded ? 'p-3.5 space-y-2.5' : 'p-2 flex flex-col items-center gap-2'
+          className={`shrink-0 border-t border-slate-200 bg-slate-50/80 ${
+            isExpanded ? 'p-3.5 space-y-2.5' : 'py-3 px-0 flex flex-col items-center gap-2'
           }`}
         >
           {isExpanded ? (
             <>
               {plan !== 'Premium' && (
-                <div className="rounded-xl bg-slate-900 p-3 text-white shadow-2xs border border-slate-800">
-                  <div className="flex items-center justify-between gap-2 mb-1.5">
-                    <span className="text-[11px] font-bold flex items-center gap-1.5">
-                      <Sparkles className="h-3 w-3 text-amber-300 shrink-0" />
+                <div className="rounded-xl bg-[#FAF8FF] p-3 text-slate-900 border border-purple-200">
+                  <div className="flex items-center justify-between gap-2 mb-1">
+                    <span className="text-[11px] font-bold text-[#6C3CE1] flex items-center gap-1.5">
+                      <Sparkles className="h-3.5 w-3.5 text-[#6C3CE1] shrink-0" />
                       {plan} Plan
                     </span>
                     <button
                       type="button"
                       onClick={() => openUpgradeModal()}
-                      className="rounded-lg bg-white px-2.5 py-1 text-[10px] font-bold text-slate-900 hover:bg-slate-100 transition-colors cursor-pointer shrink-0"
+                      className="rounded-lg bg-[#6C3CE1] px-2.5 py-1 text-[10px] font-bold text-white hover:bg-[#5829C7] transition-colors cursor-pointer shrink-0"
                     >
                       Upgrade
                     </button>
                   </div>
-                  <p className="text-[10px] text-slate-400 leading-tight line-clamp-1">
-                    Unlock higher resume tailorings & live voice prep.
+                  <p className="text-[10px] text-slate-600 leading-tight line-clamp-1">
+                    Unlock unlimited ATS resume tailoring & voice interviews.
                   </p>
                 </div>
               )}
@@ -354,7 +373,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       'https://api.dicebear.com/7.x/initials/svg?seed=Member'
                     }
                     alt={profile?.full_name || 'Member'}
-                    className="h-9 w-9 rounded-full object-cover ring-1 ring-slate-200 shrink-0"
+                    className="h-9 w-9 rounded-full object-cover ring-2 ring-[#6C3CE1]/20 shrink-0"
                   />
                   <div className="min-w-0">
                     <p className="text-xs font-bold text-slate-900 truncate">
@@ -371,14 +390,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   onClick={handleLogout}
                   title="Sign Out"
                   aria-label="Sign Out"
-                  className="rounded-xl p-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition-colors cursor-pointer shrink-0"
+                  className="h-9 w-9 rounded-xl flex items-center justify-center text-[#334155] hover:bg-rose-50 hover:text-rose-600 transition-colors cursor-pointer shrink-0"
                 >
-                  <LogOut className="h-4 w-4" />
+                  <LogOut className="h-4 w-4 stroke-[2]" />
                 </button>
               </div>
             </>
           ) : (
-            /* Collapsed Bottom User Avatar & Sign Out Icon */
+            /* Collapsed 44x44px Centered Avatar & Sign Out Buttons */
             <>
               <button
                 type="button"
@@ -391,7 +410,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 }
                 onMouseLeave={() => setTooltip(null)}
                 aria-label="Account Settings"
-                className="relative rounded-full p-0.5 hover:ring-2 hover:ring-slate-300 transition-all cursor-pointer"
+                className="relative h-11 w-11 rounded-xl flex items-center justify-center hover:bg-[#F3EEFF] transition-colors cursor-pointer mx-auto"
               >
                 <img
                   src={
@@ -399,9 +418,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     'https://api.dicebear.com/7.x/initials/svg?seed=Member'
                   }
                   alt={profile?.full_name || 'Member'}
-                  className="h-8 w-8 rounded-full object-cover ring-1 ring-slate-200"
+                  className="h-8 w-8 rounded-full object-cover ring-2 ring-[#6C3CE1]/25"
                 />
-                <span className="absolute bottom-0 right-0 h-2 w-2 rounded-full bg-emerald-500 ring-2 ring-white" />
+                <span className="absolute bottom-1.5 right-1.5 h-2 w-2 rounded-full bg-emerald-500 ring-2 ring-white" />
               </button>
 
               <button
@@ -410,16 +429,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 onMouseEnter={(e) => handleItemHover(e, 'Sign Out')}
                 onMouseLeave={() => setTooltip(null)}
                 aria-label="Sign Out"
-                className="rounded-xl p-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition-colors cursor-pointer"
+                className="h-11 w-11 rounded-xl flex items-center justify-center text-[#334155] hover:bg-rose-50 hover:text-rose-600 transition-colors cursor-pointer mx-auto"
               >
-                <LogOut className="h-4 w-4" />
+                <LogOut className="h-5 w-5 stroke-[2]" />
               </button>
             </>
           )}
         </div>
       </aside>
 
-      {/* Floating Tooltip for Collapsed 72px Rail (Fixed outside overflow-y-auto so never clipped) */}
+      {/* Crisp Floating Tooltip to the Right of Collapsed 72px Rail */}
       {!isExpanded && tooltip && (
         <div
           role="tooltip"
@@ -428,7 +447,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
         >
           <span>{tooltip.label}</span>
           {tooltip.badge && (
-            <span className="rounded-full bg-white/20 px-1.5 py-0.5 text-[10px] font-bold text-white">
+            <span className="inline-flex items-center gap-1 rounded-full bg-[#6C3CE1] px-2 py-0.5 text-[10px] font-bold text-white">
+              <span
+                className={`h-1.5 w-1.5 rounded-full ${
+                  tooltip.dotColor || 'bg-white'
+                }`}
+              />
               {tooltip.badge}
             </span>
           )}
@@ -437,8 +461,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {/* ====================================================================
           MOBILE & TABLET SLIDE-IN DRAWER (< 1024px)
-          Opened by menu button in header, dark overlay, closes on route change,
-          overlay tap, and Escape key. No auto-minimize.
       ==================================================================== */}
       <div
         className={`fixed inset-0 z-50 lg:hidden ${
@@ -449,24 +471,24 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {/* Dark Backdrop Overlay */}
         <div
           onClick={onCloseMobileDrawer}
-          className={`fixed inset-0 bg-slate-900/50 backdrop-blur-xs ${
+          className={`fixed inset-0 bg-slate-900/50 ${
             prefersReducedMotion
               ? 'transition-none duration-0'
-              : 'transition-opacity duration-250 ease-in-out'
+              : 'transition-opacity duration-200 ease-out'
           } ${mobileDrawerOpen ? 'opacity-100' : 'opacity-0'}`}
         />
 
         {/* Slide-in Drawer Panel */}
         <aside
           aria-label="Mobile Navigation Drawer"
-          className={`relative z-10 flex h-[100dvh] max-h-[100dvh] w-72 max-w-[85vw] flex-col bg-white shadow-2xl border-r border-slate-200 ${
+          className={`relative z-10 flex h-[100dvh] max-h-[100dvh] w-[260px] max-w-[85vw] flex-col bg-white shadow-2xl border-r border-slate-200 ${
             prefersReducedMotion
               ? 'transition-none duration-0'
-              : 'transition-transform duration-250 ease-in-out'
+              : 'transition-transform duration-200 ease-out'
           } ${mobileDrawerOpen ? 'translate-x-0' : '-translate-x-full'}`}
         >
           {/* Drawer Header */}
-          <div className="shrink-0 flex items-center justify-between px-5 h-20 border-b border-slate-200">
+          <div className="shrink-0 flex items-center justify-between px-4 h-20 border-b border-slate-200">
             <button
               type="button"
               onClick={() => {
@@ -485,17 +507,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
               type="button"
               onClick={onCloseMobileDrawer}
               aria-label="Close Navigation Drawer"
-              className="rounded-xl p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-900 cursor-pointer"
+              className="rounded-xl p-2 text-[#334155] hover:bg-[#F3EEFF] hover:text-[#6C3CE1] cursor-pointer"
             >
               <X className="h-5 w-5" />
             </button>
           </div>
 
           {/* Drawer Scrollable Nav */}
-          <nav className="flex-1 min-h-0 overflow-y-auto sidebar-scroll px-3.5 py-4 space-y-1">
-            <p className="px-3 text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2">
-              Workspace
-            </p>
+          <nav className="flex-1 min-h-0 overflow-y-auto sidebar-scroll px-3 py-3 space-y-1.5">
             {visibleItems.map((item) => {
               const Icon = item.icon;
               const isActive = activePage === item.id;
@@ -507,16 +526,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     onSelectPage(item.id);
                     onCloseMobileDrawer();
                   }}
-                  className={`w-full flex items-center justify-between rounded-xl px-3.5 py-2.5 text-xs font-semibold transition-colors cursor-pointer ${
+                  className={`w-full h-11 flex items-center justify-between rounded-xl px-3.5 text-xs font-semibold transition-colors cursor-pointer ${
                     isActive
-                      ? 'bg-slate-900 text-white font-bold shadow-2xs'
-                      : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                      ? 'bg-[#6C3CE1] text-white font-bold shadow-xs'
+                      : 'text-[#334155] hover:bg-[#F3EEFF] hover:text-[#6C3CE1]'
                   }`}
                 >
                   <div className="flex items-center gap-3">
                     <Icon
-                      className={`h-4 w-4 ${
-                        isActive ? 'text-white' : 'text-slate-400'
+                      strokeWidth={2}
+                      className={`h-5 w-5 ${
+                        isActive ? 'text-white' : 'text-[#334155]'
                       }`}
                     />
                     <span>{item.label}</span>
@@ -525,10 +545,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     <span
                       className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
                         isActive
-                          ? 'bg-white/20 text-white'
+                          ? 'bg-white text-[#6C3CE1]'
                           : item.id === 'admin'
                           ? 'bg-amber-100 text-amber-800'
-                          : 'bg-slate-100 text-slate-700'
+                          : 'bg-[#F3EEFF] text-[#6C3CE1]'
                       }`}
                     >
                       {item.badge}
@@ -540,17 +560,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </nav>
 
           {/* Pinned Drawer User Footer */}
-          <div className="shrink-0 p-4 border-t border-slate-200 bg-slate-50/70 space-y-3">
+          <div className="shrink-0 p-4 border-t border-slate-200 bg-slate-50/80 space-y-3">
             {plan !== 'Premium' && (
-              <div className="rounded-xl bg-slate-900 p-3 text-white flex items-center justify-between gap-2">
-                <span className="text-xs font-bold">{plan} Plan</span>
+              <div className="rounded-xl bg-[#FAF8FF] border border-purple-200 p-3 flex items-center justify-between gap-2">
+                <span className="text-xs font-bold text-[#6C3CE1]">{plan} Plan</span>
                 <button
                   type="button"
                   onClick={() => {
                     onCloseMobileDrawer();
                     openUpgradeModal();
                   }}
-                  className="rounded-lg bg-white px-2.5 py-1 text-[10px] font-bold text-slate-900"
+                  className="rounded-lg bg-[#6C3CE1] px-2.5 py-1 text-[10px] font-bold text-white"
                 >
                   Upgrade
                 </button>
@@ -565,7 +585,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     'https://api.dicebear.com/7.x/initials/svg?seed=Member'
                   }
                   alt={profile?.full_name || 'Member'}
-                  className="h-9 w-9 rounded-full object-cover ring-1 ring-slate-200 shrink-0"
+                  className="h-9 w-9 rounded-full object-cover ring-2 ring-[#6C3CE1]/20 shrink-0"
                 />
                 <div className="min-w-0">
                   <p className="text-xs font-bold text-slate-900 truncate">
@@ -581,7 +601,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 type="button"
                 onClick={handleLogout}
                 title="Sign Out"
-                className="rounded-xl p-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition-colors cursor-pointer shrink-0"
+                className="rounded-xl p-2 text-[#334155] hover:bg-rose-50 hover:text-rose-600 transition-colors cursor-pointer shrink-0"
               >
                 <LogOut className="h-4 w-4" />
               </button>

@@ -22,6 +22,8 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { apiFetch as fetch } from '../../lib/staticServerlessFallback';
+import { extractResumeDocumentInBrowser } from '../../lib/resumeDocumentExtractor';
+import { parseAndScoreResumeHighRecall } from '../../lib/resumeHighRecallParser';
 
 // Feature flag: Email OTP verification is disabled (kept intact in codebase, not removed)
 export const ENABLE_EMAIL_OTP_VERIFICATION = false;
@@ -73,6 +75,8 @@ const SUGGESTED_SKILLS = [
   'Docker',
   'Java',
 ];
+
+const ONBOARDING_DRAFT_KEY = 'careerwave_onboarding_step_draft';
 
 export const AuthModal: React.FC<AuthModalProps> = ({
   isOpen,
@@ -127,6 +131,57 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  // Load saved onboarding draft if available so user never loses inputs
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(ONBOARDING_DRAFT_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.fullName) setFullName(parsed.fullName);
+        if (parsed.email) setEmail(parsed.email);
+        if (parsed.title) setTitle(parsed.title);
+        if (parsed.targetRole) setTargetRole(parsed.targetRole);
+        if (parsed.experienceLevel) setExperienceLevel(parsed.experienceLevel);
+        if (parsed.careerTrack) setCareerTrack(parsed.careerTrack);
+        if (parsed.educationOrCompany) setEducationOrCompany(parsed.educationOrCompany);
+        if (parsed.location) setLocation(parsed.location);
+        if (parsed.workPreference) setWorkPreference(parsed.workPreference);
+        if (parsed.careerGoal) setCareerGoal(parsed.careerGoal);
+        if (Array.isArray(parsed.selectedSkills) && parsed.selectedSkills.length > 0) {
+          setSelectedSkills(parsed.selectedSkills);
+        }
+        if (parsed.bio) setBio(parsed.bio);
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const persistOnboardingDraft = () => {
+    try {
+      localStorage.setItem(
+        ONBOARDING_DRAFT_KEY,
+        JSON.stringify({
+          fullName: fullName.trim(),
+          email: email.trim().toLowerCase(),
+          title: title.trim(),
+          targetRole: targetRole.trim(),
+          experienceLevel,
+          careerTrack,
+          educationOrCompany: educationOrCompany.trim(),
+          location: location.trim(),
+          workPreference,
+          careerGoal,
+          selectedSkills,
+          bio: bio.trim(),
+          savedAt: new Date().toISOString(),
+        })
+      );
+    } catch {
+      // ignore
+    }
+  };
 
   useEffect(() => {
     if (isOpen) {
@@ -252,6 +307,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       return;
     }
 
+    persistOnboardingDraft();
     setSignupStep('onboarding');
   };
 
@@ -279,48 +335,25 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setIsAutoFillingOnboarding(true);
 
     try {
-      const ext = file.name.toLowerCase();
-      const isBinaryDoc =
-        ext.endsWith('.pdf') ||
-        ext.endsWith('.docx') ||
-        ext.endsWith('.doc') ||
-        file.type.includes('pdf') ||
-        file.type.includes('word') ||
-        file.type.includes('officedocument');
-
-      const fileBase64 = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result || ''));
-        reader.onerror = (err) => reject(err);
-        reader.readAsDataURL(file);
-      });
-
-      let rawText = '';
-      if (!isBinaryDoc) {
-        rawText = await file.text();
-      }
-
-      const res = await fetch('/api/resume/parse', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          rawText,
-          fileBase64,
-          fileName: file.name,
-          mimeType: file.type || 'application/pdf',
-          fileSize: `${Math.max(1, Math.round(file.size / 1024))} KB`,
-          candidateEmail: email.trim().toLowerCase() || undefined,
-        }),
-      });
-
-      const json = await res.json();
-      if (!res.ok || !json.success || !json.data) {
-        setError(json.error || 'Could not extract details from this resume file.');
+      const extraction = await extractResumeDocumentInBrowser(file);
+      if (extraction.error || !extraction.rawText || extraction.characterCount < 30) {
+        setError(
+          extraction.error ||
+            'Could not extract readable text from this resume file. Please upload a text-based PDF, DOCX, or TXT.'
+        );
         return;
       }
 
-      const parsed = json.data;
-      const inf = json.inferredProfile || {};
+      const result = await parseAndScoreResumeHighRecall({
+        rawText: extraction.rawText,
+        fileName: file.name,
+        fileSize: `${Math.max(1, Math.round(file.size / 1024))} KB`,
+        pageCount: extraction.pageCount,
+        candidateEmail: email.trim().toLowerCase() || undefined,
+      });
+
+      const parsed = result.resume;
+      const inf = result.inferredProfile || {};
 
       if (
         parsed.contact?.fullName &&
@@ -359,10 +392,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         uploadedFileName: file.name,
         uploadedFileSize: `${Math.max(1, Math.round(file.size / 1024))} KB`,
         uploadedAt: new Date().toISOString(),
-        rawTextPreview: json.rawExtractedText || rawText || parsed.rawTextPreview,
+        rawTextPreview: extraction.rawText,
       });
 
-      setInfoMessage(`Auto-filled all onboarding fields from "${file.name}"!`);
+      persistOnboardingDraft();
+      setInfoMessage(
+        `Auto-filled onboarding fields from "${file.name}" (${extraction.wordCount} words extracted, ATS Score ${parsed.atsScore}/100)!`
+      );
     } catch (err: any) {
       setError(err?.message || 'Failed to parse resume for onboarding auto-fill.');
     } finally {
@@ -370,8 +406,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     }
   };
 
-  const handleCompleteSignupWithOnboarding = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const submitSignupWithOnboarding = async () => {
     setError(null);
 
     if (!title.trim()) {
@@ -383,6 +418,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       return;
     }
 
+    persistOnboardingDraft();
     setSubmitting(true);
     try {
       const result = await registerWithPassword({
@@ -406,6 +442,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       if (result.error) {
         setError(result.error);
       } else {
+        try {
+          localStorage.removeItem(ONBOARDING_DRAFT_KEY);
+        } catch {
+          // ignore
+        }
         if (onboardingParsedResume) {
           await saveUserResume(onboardingParsedResume);
         }
@@ -417,8 +458,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     }
   };
 
-  const handlePasswordSignIn = async (e: React.FormEvent) => {
+  const handleCompleteSignupWithOnboarding = async (e: React.FormEvent) => {
     e.preventDefault();
+    await submitSignupWithOnboarding();
+  };
+
+  const submitPasswordSignIn = async () => {
     setError(null);
 
     const cleanEmail = email.trim().toLowerCase();
@@ -443,6 +488,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const handlePasswordSignIn = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await submitPasswordSignIn();
   };
 
   return (
@@ -658,9 +708,35 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             )}
 
             {error && (
-              <div className="mb-4 flex items-start gap-2.5 rounded-xl bg-rose-50 border border-rose-200 p-3.5 text-xs text-rose-700">
-                <AlertCircle className="h-4 w-4 text-rose-500 shrink-0 mt-0.5" />
-                <span>{error}</span>
+              <div className="mb-4 flex items-start justify-between gap-2.5 rounded-xl bg-rose-50 border border-rose-200 p-3.5 text-xs text-rose-700">
+                <div className="flex items-start gap-2.5">
+                  <AlertCircle className="h-4 w-4 text-rose-500 shrink-0 mt-0.5" />
+                  <span>{error}</span>
+                </div>
+                {(authMode === 'login' || signupStep === 'onboarding') && (
+                  <button
+                    type="button"
+                    disabled={submitting}
+                    onClick={() => {
+                      if (authMode === 'login') {
+                        submitPasswordSignIn();
+                      } else {
+                        submitSignupWithOnboarding();
+                      }
+                    }}
+                    className="inline-flex items-center gap-1 rounded-lg bg-white border border-rose-200 px-2.5 py-1 text-[11px] font-bold text-rose-700 hover:bg-rose-100 shrink-0 cursor-pointer"
+                  >
+                    <RefreshCw className={`h-3 w-3 ${submitting ? 'animate-spin' : ''}`} />
+                    <span>Retry</span>
+                  </button>
+                )}
+              </div>
+            )}
+
+            {infoMessage && !error && (
+              <div className="mb-4 flex items-start gap-2.5 rounded-xl bg-emerald-50 border border-emerald-200 p-3.5 text-xs text-emerald-800">
+                <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0 mt-0.5" />
+                <span>{infoMessage}</span>
               </div>
             )}
 
