@@ -1,14 +1,16 @@
 import * as XLSX from 'xlsx';
 import {
-  NormalizedJob,
-  SourcePlatform,
-  EmploymentType,
   detectSourcePlatform,
   normalizeEmploymentType,
   inferJobSector,
   formatSalaryRange,
   sanitizeJobDescriptionHtml,
-} from '../types/jobs';
+} from '../types/jobs.ts';
+import type {
+  NormalizedJob,
+  SourcePlatform,
+  EmploymentType,
+} from '../types/jobs.ts';
 
 export interface ExcelColumnSpec {
   header: string;

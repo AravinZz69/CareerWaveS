@@ -21,6 +21,7 @@ import {
   Upload,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import { apiFetch as fetch } from '../../lib/staticServerlessFallback';
 
 // Feature flag: Email OTP verification is disabled (kept intact in codebase, not removed)
 export const ENABLE_EMAIL_OTP_VERIFICATION = false;

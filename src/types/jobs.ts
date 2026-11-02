@@ -8,7 +8,7 @@ import type {
   JobFetchInput,
   SourceFetchDiag,
   JobFetchResponse,
-} from '../schema/unifiedDataSchema';
+} from '../schema/unifiedDataSchema.ts';
 
 export type {
   SourcePlatform,

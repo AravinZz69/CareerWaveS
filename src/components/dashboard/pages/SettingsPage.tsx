@@ -23,6 +23,7 @@ import {
 import { useAuth, UsageFeature } from '../../../context/AuthContext';
 import { formatINR } from '../../../utils/currency';
 import { downloadSubscriptionInvoicePdf, InvoicePdfData } from '../../../utils/invoicePdf';
+import { apiFetch as fetch } from '../../../lib/staticServerlessFallback';
 
 interface SettingsPageProps {
   onOpenLegal?: (tab: 'terms' | 'privacy' | 'refund') => void;

@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { JobDetailPage } from './JobDetailPage';
 import { useAuth } from '../../../context/AuthContext';
+import { apiFetch as fetch } from '../../../lib/staticServerlessFallback';
 import {
   NormalizedJob,
   SourcePlatform,

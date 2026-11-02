@@ -22,4 +22,4 @@ export type {
   JobItem,
   ApplicationKitData,
   JobNotification,
-} from '../schema/unifiedDataSchema';
+} from '../schema/unifiedDataSchema.ts';

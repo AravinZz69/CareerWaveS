@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { apiFetch as fetch } from '../../../lib/staticServerlessFallback';
 import { Card } from '../../ui/Card';
 import { Button } from '../../ui/Button';
 import {

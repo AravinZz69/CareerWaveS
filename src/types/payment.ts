@@ -10,4 +10,4 @@ export type {
   PublicActiveGateway,
   PaymentOrderRecord,
   CheckoutInitResponse,
-} from '../schema/unifiedDataSchema';
+} from '../schema/unifiedDataSchema.ts';

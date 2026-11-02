@@ -19,6 +19,7 @@ import {
   ArrowUpRight,
 } from 'lucide-react';
 import { useAuth } from '../../../context/AuthContext';
+import { apiFetch as fetch } from '../../../lib/staticServerlessFallback';
 import type {
   PaymentGatewayConfig,
   PaymentGatewayName,

@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { apiFetch as fetch } from '../lib/staticServerlessFallback';
 
 export type AppRole = 'admin' | 'user';
 export type PlanName = 'Free' | 'Pro' | 'Premium';

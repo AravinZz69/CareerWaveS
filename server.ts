@@ -3,6 +3,7 @@ import type { Request, Response } from 'express';
 import { GoogleGenAI, Type } from '@google/genai';
 import dotenv from 'dotenv';
 import path from 'path';
+import fs from 'fs';
 import zlib from 'zlib';
 import crypto from 'crypto';
 import {
@@ -8961,13 +8962,24 @@ app.post('/api/admin/ats-golden-test', (req: Request, res: Response) => {
 // Vite Dev / Production Serving
 // ==============================================================================
 async function startServer() {
-  const isProd = process.env.NODE_ENV === 'production';
+  const distPath = path.resolve(process.cwd(), 'dist');
+  const distIndex = path.join(distPath, 'index.html');
+  const isProd =
+    process.env.NODE_ENV === 'production' ||
+    process.env.npm_lifecycle_event === 'start' ||
+    process.env.npm_lifecycle_event === 'preview';
 
-  if (isProd) {
-    const distPath = path.resolve(process.cwd(), 'dist');
+  app.all('/api/*', (req: Request, res: Response) => {
+    res.status(404).json({
+      success: false,
+      error: `API endpoint not found: ${req.method} ${req.originalUrl}`,
+    });
+  });
+
+  if (isProd && fs.existsSync(distIndex)) {
     app.use(express.static(distPath));
     app.get('*', (_req: Request, res: Response) => {
-      res.sendFile(path.join(distPath, 'index.html'));
+      res.sendFile(distIndex);
     });
   } else {
     const { createServer: createViteServer } = await import('vite');
@@ -8979,7 +8991,11 @@ async function startServer() {
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`CareerWave Full-Stack server running at http://0.0.0.0:${PORT} (mode: ${isProd ? 'production' : 'development'})`);
+    console.log(
+      `CareerWave Full-Stack server running at http://0.0.0.0:${PORT} (mode: ${
+        isProd ? 'production' : 'development'
+      })`
+    );
   });
 }
 
